@@ -897,8 +897,7 @@ public class MediaProvider extends ContentProvider {
                     mPickerSyncController.notifyMediaEvent();
                 }
 
-                mDatabaseBackupAndRecovery.backupVolumeDbData(helper, insertedRow.getVolumeName(),
-                        insertedRow.getPath(), insertedRow);
+                mDatabaseBackupAndRecovery.backupVolumeDbData(helper, insertedRow);
             });
         }
 
@@ -6501,6 +6500,7 @@ public class MediaProvider extends ContentProvider {
             }
             case MediaStore.GRANT_MEDIA_READ_FOR_PACKAGE_CALL: {
                 final int caller = Binder.getCallingUid();
+                final int userId = uidToUserId(caller);
                 final List<Uri> uris;
                 final String packageName;
                 if (checkPermissionSelf(caller)) {
@@ -6537,7 +6537,7 @@ public class MediaProvider extends ContentProvider {
                                 + " Media Provider UID:" + MY_UID);
                 }
 
-                mMediaGrants.addMediaGrantsForPackage(packageName, uris);
+                mMediaGrants.addMediaGrantsForPackage(packageName, uris, userId);
                 return null;
             }
             case MediaStore.CREATE_WRITE_REQUEST_CALL:
@@ -6591,7 +6591,10 @@ public class MediaProvider extends ContentProvider {
                 mPickerSyncController.forceSetCloudProvider(cloudProvider);
                 Log.i(TAG, "Completed request to set cloud provider to " + cloudProvider);
 
-                mPickerSyncController.reloadAllMediaAsync();
+                // Cannot start sync here yet because currently sync and other picker related
+                // queries like SET_CLOUD_PROVIDER_CALL and GET_CLOUD_PROVIDER use the same lock.
+                // If we start sync here and then user tries to return to the Picker or change the
+                // provider again, Picker will ANR and crash.
                 return new Bundle();
             }
             case MediaStore.SYNC_PROVIDERS_CALL: {
