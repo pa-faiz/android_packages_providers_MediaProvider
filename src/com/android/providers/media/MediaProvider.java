@@ -814,6 +814,12 @@ public class MediaProvider extends ContentProvider {
                             return null ;
                         });
                     }
+
+                    // Only default system user 0 has permission to update xattrs on /data/media/0
+                    if (sUserId == UserHandle.SYSTEM.getIdentifier()) {
+                        mDatabaseBackupAndRecovery.removeRecoveryDataForUserId(
+                                userToBeRemoved.getIdentifier());
+                    }
                     break;
             }
         }
@@ -1459,10 +1465,25 @@ public class MediaProvider extends ContentProvider {
         }
 
         // Second, is the app pending, probably from a backup/restore operation?
-        for (SessionInfo si : pm.getPackageInstaller().getAllSessions()) {
-            if (Objects.equals(packageName, si.getAppPackageName())) {
+        // Cloned app installations do not have a linked install session, so skipping the check in
+        // case the user-id is a clone profile.
+        if (!isAppCloneUserForFuse(userId)) {
+            if (sUserId != userId) {
+                // Skip the package check and ensure media provider doesn't crash
+                // Returning true since we are unsure what caused the cross-user entries to be in
+                // the database and want to avoid deleting data that might be required.
+                Log.e(TAG, "Skip pruning cross-user entries stored in database for package: "
+                        + packageName + " userId: " + userId + " processUserId: " + sUserId);
                 return true;
             }
+            for (SessionInfo si : pm.getPackageInstaller().getAllSessions()) {
+                if (Objects.equals(packageName, si.getAppPackageName())) {
+                    return true;
+                }
+            }
+        } else {
+            Log.e(TAG, "Cross-user entries found in database for package " + packageName
+                    + " userId: " + userId + " processUserId: " + sUserId);
         }
 
         // I've never met this package in my life
@@ -1544,11 +1565,13 @@ public class MediaProvider extends ContentProvider {
 
         // removing calling userId
         userIds.remove(String.valueOf(sUserId));
+
+        List<String> validUsers = mUserManager.getEnabledProfiles().stream()
+                .map(userHandle -> String.valueOf(userHandle.getIdentifier())).collect(
+                        Collectors.toList());
         // removing all the valid/existing user, remaining userIds would be users who would have
         // been removed
-        userIds.removeAll(mUserManager.getEnabledProfiles().stream()
-                .map(userHandle -> String.valueOf(userHandle.getIdentifier())).collect(
-                        Collectors.toList()));
+        userIds.removeAll(validUsers);
 
         // Cleaning media files of users who have been removed
         mExternalDatabase.runWithTransaction((db) -> {
@@ -1559,6 +1582,8 @@ public class MediaProvider extends ContentProvider {
             });
             return null ;
         });
+
+        mDatabaseBackupAndRecovery.removeRecoveryDataExceptValidUsers(validUsers);
     }
 
     private void pruneStalePackages(CancellationSignal signal) {
@@ -7582,7 +7607,7 @@ public class MediaProvider extends ContentProvider {
             final String probePath = initialValues.getAsString(MediaColumns.DATA);
             final String probeVolume = extractVolumeName(probePath);
             final String probeOwner = extractPathOwnerPackageName(probePath);
-            if (Objects.equals(beforePath, probePath)) {
+            if (StringUtils.equalIgnoreCase(beforePath, probePath)) {
                 Log.d(TAG, "Identical paths " + beforePath + "; not moving");
             } else if (!Objects.equals(beforeVolume, probeVolume)) {
                 throw new IllegalArgumentException("Changing volume from " + beforePath + " to "
