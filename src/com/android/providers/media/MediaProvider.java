@@ -51,7 +51,7 @@ import static android.provider.MediaStore.QUERY_ARG_MATCH_PENDING;
 import static android.provider.MediaStore.QUERY_ARG_MATCH_TRASHED;
 import static android.provider.MediaStore.QUERY_ARG_REDACTED_URI;
 import static android.provider.MediaStore.QUERY_ARG_RELATED_URI;
-import static android.provider.MediaStore.READ_BACKED_UP_FILE_PATHS;
+import static android.provider.MediaStore.READ_BACKUP;
 import static android.provider.MediaStore.getVolumeName;
 import static android.system.OsConstants.F_GETFL;
 
@@ -60,7 +60,6 @@ import static com.android.providers.media.AccessChecker.getWhereForOwnerPackageM
 import static com.android.providers.media.AccessChecker.getWhereForUserSelectedAccess;
 import static com.android.providers.media.AccessChecker.hasAccessToCollection;
 import static com.android.providers.media.AccessChecker.hasUserSelectedAccess;
-import static com.android.providers.media.DatabaseBackupAndRecovery.LEVEL_DB_READ_LIMIT;
 import static com.android.providers.media.DatabaseHelper.EXTERNAL_DATABASE_NAME;
 import static com.android.providers.media.DatabaseHelper.INTERNAL_DATABASE_NAME;
 import static com.android.providers.media.LocalCallingIdentity.APPOP_REQUEST_INSTALL_PACKAGES_FOR_SHARED_UID;
@@ -288,6 +287,7 @@ import com.android.providers.media.playlist.Playlist;
 import com.android.providers.media.scan.MediaScanner;
 import com.android.providers.media.scan.MediaScanner.ScanReason;
 import com.android.providers.media.scan.ModernMediaScanner;
+import com.android.providers.media.stableuris.dao.BackupIdRow;
 import com.android.providers.media.util.CachedSupplier;
 import com.android.providers.media.util.DatabaseUtils;
 import com.android.providers.media.util.FileUtils;
@@ -6647,13 +6647,8 @@ public class MediaProvider extends ContentProvider {
                     restoreLocalCallingIdentity(token);
                 }
             case MediaStore.GET_CLOUD_PROVIDER_CALL: {
-                // TODO(b/245746037): replace UID check with Permission(MANAGE_CLOUD_MEDIA_PROVIDER)
-                // PhotoPickerSettingsActivity will run as either the primary or the managed user.
-                // Since the activity shows both personal and work tabs, it will have to make get
-                // cloud provider IPC call to both instances of Media Provider - one running as
-                // primary profile and the other as managed profile. Hence, UID check will not be
-                // feasible here.
-                if (!checkPermissionSelf(Binder.getCallingUid())) {
+                if (!checkPermissionShell(Binder.getCallingUid())
+                        && !checkPermissionSelf(Binder.getCallingUid())) {
                     throw new SecurityException("Get cloud provider not allowed. "
                             + " Calling app ID:" + UserHandle.getAppId(Binder.getCallingUid())
                             + " Calling UID:" + Binder.getCallingUid()
@@ -6666,20 +6661,28 @@ public class MediaProvider extends ContentProvider {
                 return bundle;
             }
             case MediaStore.SET_CLOUD_PROVIDER_CALL: {
-                // TODO(b/267327327): Add permission check before updating cloud provider. Also
-                //  validate the new cloud provider before setting it by using
-                //  PickerSyncController#setCloudProvider instead of
-                //  PickerSyncController#forceSetCloudProvider.
                 final String cloudProvider = extras.getString(MediaStore.EXTRA_CLOUD_PROVIDER);
                 Log.i(TAG, "Request received to set cloud provider to " + cloudProvider);
-                mPickerSyncController.forceSetCloudProvider(cloudProvider);
-                Log.i(TAG, "Completed request to set cloud provider to " + cloudProvider);
+                boolean isUpdateSuccessful = false;
+                if (checkPermissionSelf(Binder.getCallingUid())) {
+                    isUpdateSuccessful = mPickerSyncController.setCloudProvider(cloudProvider);
+                } else if (checkPermissionShell(Binder.getCallingUid())) {
+                    isUpdateSuccessful =
+                            mPickerSyncController.forceSetCloudProvider(cloudProvider);
+                } else {
+                    throw new SecurityException("Set cloud provider not allowed. "
+                            + " Calling app ID:" + UserHandle.getAppId(Binder.getCallingUid())
+                            + " Calling UID:" + Binder.getCallingUid()
+                            + " Media Provider app ID:" + UserHandle.getAppId(MY_UID)
+                            + " Media Provider UID:" + MY_UID);
+                }
 
-                // Cannot start sync here yet because currently sync and other picker related
-                // queries like SET_CLOUD_PROVIDER_CALL and GET_CLOUD_PROVIDER use the same lock.
-                // If we start sync here and then user tries to return to the Picker or change the
-                // provider again, Picker will ANR and crash.
-                return new Bundle();
+                if (isUpdateSuccessful) {
+                    Log.i(TAG, "Completed request to set cloud provider to " + cloudProvider);
+                }
+                final Bundle bundle = new Bundle();
+                bundle.putBoolean(MediaStore.SET_CLOUD_PROVIDER_RESULT, isUpdateSuccessful);
+                return bundle;
             }
             case MediaStore.SYNC_PROVIDERS_CALL: {
                 syncAllMedia();
@@ -6733,30 +6736,21 @@ public class MediaProvider extends ContentProvider {
                 backupDatabases(null);
                 return new Bundle();
             }
-            case MediaStore.READ_BACKED_UP_FILE_PATHS: {
+            case READ_BACKUP: {
                 getContext().enforceCallingPermission(Manifest.permission.WRITE_MEDIA_STORAGE,
-                        "Permission missing to call READ_BACKED_UP_FILE_PATHS by "
-                                + "uid:" + Binder.getCallingUid());
-                List<String> cumulatedValues = new ArrayList<String>();
-                String[] backedUpFilePaths;
-                String lastReadValue = "";
-                while (true) {
-                    backedUpFilePaths = mDatabaseBackupAndRecovery.readBackedUpFilePaths(arg,
-                            lastReadValue, LEVEL_DB_READ_LIMIT);
-                    if (backedUpFilePaths.length <= 0) {
-                        break;
-                    }
-                    cumulatedValues.addAll(Arrays.asList(backedUpFilePaths));
-                    if (backedUpFilePaths.length < LEVEL_DB_READ_LIMIT) {
-                        break;
-                    }
-                    lastReadValue = backedUpFilePaths[backedUpFilePaths.length - 1];
-                }
-
+                        "Permission missing to call READ_BACKUP by uid:" + Binder.getCallingUid());
                 Bundle bundle = new Bundle();
-                Object[] values =  cumulatedValues.toArray();
-                String[] resultArray =  Arrays.copyOf(values, values.length, String[].class);
-                bundle.putStringArray(READ_BACKED_UP_FILE_PATHS, resultArray);
+                Optional<BackupIdRow> backupIdRowOptional =
+                        mDatabaseBackupAndRecovery.readDataFromBackup(arg, extras.getString(
+                                FileColumns.DATA));
+                String data = null;
+                try {
+                    data = backupIdRowOptional.isPresent() ? BackupIdRow.serialize(
+                            backupIdRowOptional.get()) : null;
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+                bundle.putString(READ_BACKUP, data);
                 return bundle;
             }
             case MediaStore.DELETE_BACKED_UP_FILE_PATHS:
@@ -10920,6 +10914,15 @@ public class MediaProvider extends ContentProvider {
         writer.println();
 
         mTranscodeHelper.dump(writer);
+        writer.println();
+
+        mConfigStore.dump(writer);
+        writer.println();
+
+        mPickerDbFacade.dump(writer);
+        writer.println();
+
+        mPickerSyncController.dump(writer);
         writer.println();
 
         dumpAccessLogs(writer);
