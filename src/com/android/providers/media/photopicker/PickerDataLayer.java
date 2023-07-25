@@ -22,6 +22,7 @@ import static android.provider.CloudMediaProviderContract.AlbumColumns.AUTHORITY
 import static android.provider.CloudMediaProviderContract.METHOD_GET_MEDIA_COLLECTION_INFO;
 import static android.provider.CloudMediaProviderContract.MediaCollectionInfo.ACCOUNT_CONFIGURATION_INTENT;
 import static android.provider.CloudMediaProviderContract.MediaCollectionInfo.ACCOUNT_NAME;
+import static android.provider.MediaStore.MY_UID;
 
 import static com.android.providers.media.PickerUriResolver.getAlbumUri;
 import static com.android.providers.media.PickerUriResolver.getMediaCollectionInfoUri;
@@ -45,16 +46,23 @@ import androidx.work.Configuration;
 import androidx.work.WorkManager;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.logging.InstanceId;
 import com.android.providers.media.ConfigStore;
 import com.android.providers.media.photopicker.data.CloudProviderQueryExtras;
 import com.android.providers.media.photopicker.data.PickerDbFacade;
+import com.android.providers.media.photopicker.metrics.NonUiEventLogger;
 import com.android.providers.media.photopicker.sync.PickerSyncManager;
+import com.android.providers.media.photopicker.sync.SyncTracker;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Fetches data for the picker UI from the db and cloud/local providers
@@ -182,6 +190,27 @@ public class PickerDataLayer {
             mSyncController.syncAllMediaFromLocalProvider();
         } else {
             mSyncController.syncAllMedia();
+        }
+    }
+
+    private void waitForSync(@NonNull SyncTracker syncTracker) {
+        waitForSyncWithTimeout(syncTracker, /* timeout */ null);
+    }
+
+    private void waitForSyncWithTimeout(
+            @NonNull SyncTracker syncTracker,
+            @Nullable Long timeoutInMillis) {
+        try {
+            final CompletableFuture<Void> completableFuture =
+                    CompletableFuture.allOf(
+                            syncTracker.pendingSyncFutures().toArray(new CompletableFuture[0]));
+            if (timeoutInMillis == null) {
+                completableFuture.get();
+            } else {
+                completableFuture.get(timeoutInMillis, TimeUnit.MILLISECONDS);
+            }
+        } catch (ExecutionException | InterruptedException | TimeoutException e) {
+            Log.e(TAG, "Could not wait for the sync to finish", e);
         }
     }
 
@@ -335,12 +364,22 @@ public class PickerDataLayer {
     }
 
     private Cursor queryProviderAlbumsInternal(@NonNull String authority, Bundle queryArgs) {
+        final InstanceId instanceId = NonUiEventLogger.generateInstanceId();
+        int numberOfAlbumsFetched = -1;
+        NonUiEventLogger.logPickerGetAlbumsStart(instanceId, MY_UID, authority);
         try {
-            return mContext.getContentResolver().query(getAlbumUri(authority),
+            final Cursor res = mContext.getContentResolver().query(getAlbumUri(authority),
                     /* projection */ null, queryArgs, /* cancellationSignal */ null);
+            if (res != null) {
+                numberOfAlbumsFetched = res.getCount();
+            }
+            return res;
         } catch (Exception e) {
             Log.w(TAG, "Failed to fetch cloud albums for: " + authority, e);
             return null;
+        } finally {
+            NonUiEventLogger.logPickerGetAlbumsEnd(instanceId, MY_UID, authority,
+                    numberOfAlbumsFetched);
         }
     }
 
