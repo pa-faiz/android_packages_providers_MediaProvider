@@ -67,6 +67,8 @@ public class PhotosTabFragment extends TabFragment {
 
     private boolean mIsCurrentPageLoading = false;
 
+    private boolean mAtLeastOnePageLoaded = false;
+
     private boolean mIsCloudMediaInPhotoPickerEnabled;
 
     private int mPageSize;
@@ -87,6 +89,12 @@ public class PhotosTabFragment extends TabFragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         final Context context = getContext();
+
+        // Init is only required for album content tab fragments when the fragment is not being
+        // recreated from a previous state.
+        if (savedInstanceState == null && !mCategory.isDefault()) {
+            mPickerViewModel.initPhotoPickerData(mCategory);
+        }
 
         // We only add the RECENT header on the PhotosTabFragment with CATEGORY_DEFAULT. In this
         // case, we call this method {loadItems} with null category. When the category is not
@@ -252,7 +260,9 @@ public class PhotosTabFragment extends TabFragment {
 
         if (mIsCloudMediaInPhotoPickerEnabled
                 && mCategory == Category.DEFAULT
-                && isAdapterPopulated()) {
+                && mAtLeastOnePageLoaded) {
+            // mAtLeastOnePageLoaded is checked to avoid calling this method while the view is
+            // being created
             LinearLayoutManager layoutManager =
                     (LinearLayoutManager) mRecyclerView.getLayoutManager();
             if (layoutManager != null) {
@@ -263,12 +273,6 @@ public class PhotosTabFragment extends TabFragment {
                                 + PaginationParameters.PAGINATION_PAGE_SIZE_ITEMS, -1, -1));
             }
         }
-    }
-
-    private boolean isAdapterPopulated() {
-        // Refresh should be called only when there are some items in the adapter to be updated.
-        return mRecyclerView.getAdapter() != null
-                && mRecyclerView.getAdapter().getItemCount() != 0;
     }
 
     private void onChangeMediaItems(@NonNull PickerViewModel.PaginatedItemsResult itemList,
@@ -283,6 +287,7 @@ public class PhotosTabFragment extends TabFragment {
             updateVisibilityForEmptyView(/* shouldShowEmptyView */ itemList.getItems().size() == 0);
         }
         mIsCurrentPageLoading = false;
+        mAtLeastOnePageLoaded = true;
     }
 
     private boolean isClearGridAction(@NonNull PickerViewModel.PaginatedItemsResult itemList) {
