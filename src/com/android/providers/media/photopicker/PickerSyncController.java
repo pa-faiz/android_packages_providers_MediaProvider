@@ -25,9 +25,14 @@ import static android.provider.CloudMediaProviderContract.EXTRA_SYNC_GENERATION;
 import static android.provider.CloudMediaProviderContract.MediaCollectionInfo.LAST_MEDIA_SYNC_GENERATION;
 import static android.provider.CloudMediaProviderContract.MediaCollectionInfo.MEDIA_COLLECTION_ID;
 
+import static com.android.providers.media.PickerUriResolver.PICKER_INTERNAL_URI;
 import static com.android.providers.media.PickerUriResolver.getDeletedMediaUri;
 import static com.android.providers.media.PickerUriResolver.getMediaCollectionInfoUri;
 import static com.android.providers.media.PickerUriResolver.getMediaUri;
+import static com.android.providers.media.photopicker.NotificationContentObserver.ALBUM_CONTENT;
+import static com.android.providers.media.photopicker.NotificationContentObserver.MEDIA;
+import static com.android.providers.media.photopicker.NotificationContentObserver.UPDATE;
+import static com.android.providers.media.photopicker.util.CursorUtils.getCursorString;
 
 import android.annotation.IntDef;
 import android.content.Context;
@@ -41,6 +46,7 @@ import android.os.Trace;
 import android.os.storage.StorageManager;
 import android.provider.CloudMediaProvider;
 import android.provider.CloudMediaProviderContract;
+import android.provider.CloudMediaProviderContract.MediaColumns;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
@@ -67,12 +73,15 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Syncs the local and currently enabled cloud {@link CloudMediaProvider} instances on the device
  * into the picker db.
  */
 public class PickerSyncController {
+
+    public static final ReentrantLock sIdleMaintenanceSyncLock = new ReentrantLock();
     private static final String TAG = "PickerSyncController";
     private static final boolean DEBUG = false;
 
@@ -80,12 +89,27 @@ public class PickerSyncController {
     private static final String PREFS_KEY_CLOUD_PREFIX = "cloud_provider:";
     private static final String PREFS_KEY_LOCAL_PREFIX = "local_provider:";
 
+    private static final String PREFS_KEY_RESUME = "resume";
+    private static final String PREFS_KEY_OPERATION_MEDIA_ADD_PREFIX = "media_add:";
+    private static final String PREFS_KEY_OPERATION_MEDIA_REMOVE_PREFIX = "media_remove:";
+    private static final String PREFS_KEY_OPERATION_ALBUM_ADD_PREFIX = "album_add:";
+
     private static final String PICKER_USER_PREFS_FILE_NAME = "picker_user_prefs";
     public static final String PICKER_SYNC_PREFS_FILE_NAME = "picker_sync_prefs";
     public static final String LOCAL_PICKER_PROVIDER_AUTHORITY =
             "com.android.providers.media.photopicker";
 
     private static final String PREFS_VALUE_CLOUD_PROVIDER_UNSET = "-";
+
+    private static final int OPERATION_ADD_MEDIA = 1;
+    private static final int OPERATION_ADD_ALBUM = 2;
+    private static final int OPERATION_REMOVE_MEDIA = 3;
+
+    @IntDef(
+            flag = false,
+            value = {OPERATION_ADD_MEDIA, OPERATION_ADD_ALBUM, OPERATION_REMOVE_MEDIA})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface OperationType {}
 
     private static final int SYNC_TYPE_NONE = 0;
     private static final int SYNC_TYPE_MEDIA_INCREMENTAL = 1;
@@ -195,13 +219,19 @@ public class PickerSyncController {
         }
     }
 
-
     /**
      * Syncs the local media
      */
     public void syncAllMediaFromLocalProvider() {
-        syncAllMediaFromProvider(mLocalProvider, /* isLocal */ true, /* retryOnFailure */ true,
-                /* enforcePagedSync*/ false);
+        // Picker sync and special format update can execute concurrently and run into a deadlock.
+        // Acquiring a lock before execution of each flow to avoid this.
+        sIdleMaintenanceSyncLock.lock();
+        try {
+            syncAllMediaFromProvider(mLocalProvider, /* isLocal */ true, /* retryOnFailure */ true,
+                    /* enforcePagedSync*/ false);
+        } finally {
+            sIdleMaintenanceSyncLock.unlock();
+        }
     }
 
     private void syncAllMediaFromCloudProvider() {
@@ -214,14 +244,14 @@ public class PickerSyncController {
             mDbFacade.setCloudProvider(null);
 
             // Trigger a sync.
-            final boolean isSyncCommitted = syncAllMediaFromProvider(cloudProvider,
+            final boolean didSyncFinish = syncAllMediaFromProvider(cloudProvider,
                     /* isLocal */ false, /* retryOnFailure */ true, /* enforcePagedSync*/ false);
 
-            // Check if sync was committed i.e. the latest collection info was persisted.
-            if (!isSyncCommitted) {
-                Log.e(TAG, "Failed to sync with cloud provider - " + cloudProvider
-                        + ". The cloud provider may have changed during the sync");
-                return;
+            // Check if sync was completed successfully.
+            if (!didSyncFinish) {
+                Log.e(TAG, "Failed to fully complete sync with cloud provider - " + cloudProvider
+                        + ". The cloud provider may have changed during the sync, or only a"
+                        + " partial sync was completed.");
             }
 
             // Reset the album_media table every time we sync all media
@@ -626,12 +656,18 @@ public class PickerSyncController {
             }
         } catch (RequestObsoleteException e) {
             Log.e(TAG, "Failed to sync all media because authority has changed: ", e);
-        } catch (RuntimeException e) {
-            // Reset all media for the cloud provider in case it never succeeds
+        } catch (IllegalStateException e) {
+            // If we're in an illegal state, reset and start a full sync again.
             resetAllMedia(authority, isLocal);
-
-            // Attempt a full sync. If this fails, the db table would have been reset,
-            // flushing all old content and leaving the picker UI empty.
+            Log.e(TAG, "Failed to sync all media. Reset media and retry: " + retryOnFailure, e);
+            if (retryOnFailure) {
+                return syncAllMediaFromProvider(authority, isLocal, /* retryOnFailure */ false,
+                        /* enforcePagedSync*/ false);
+            }
+        } catch (RuntimeException e) {
+            // Retry the failed operation to see if it was an intermittent problem. If this fails,
+            // the database will be in a partial state until the sync resumes from this point
+            // on next run.
             Log.e(TAG, "Failed to sync all media. Reset media and retry: " + retryOnFailure, e);
             if (retryOnFailure) {
                 return syncAllMediaFromProvider(authority, isLocal, /* retryOnFailure */ false,
@@ -700,11 +736,19 @@ public class PickerSyncController {
 
         Log.i(TAG, "Executing SyncAdd. isLocal: " + isLocal + ". authority: " + authority);
 
+        String resumeKey =
+                getPrefsKey(isLocal, PREFS_KEY_OPERATION_MEDIA_ADD_PREFIX + PREFS_KEY_RESUME);
+
         Trace.beginSection(traceSectionName("executeSyncAdd", isLocal));
-        try (PickerDbFacade.DbWriteOperation operation =
-                     mDbFacade.beginAddMediaOperation(authority)) {
-            executePagedSync(uri, expectedMediaCollectionId, expectedHonoredArgs, queryArgs,
-                    operation);
+        try {
+            executePagedSync(
+                    uri,
+                    expectedMediaCollectionId,
+                    expectedHonoredArgs,
+                    queryArgs,
+                    resumeKey,
+                    OPERATION_ADD_MEDIA,
+                    authority);
         } finally {
             Trace.endSection();
         }
@@ -716,15 +760,16 @@ public class PickerSyncController {
 
         Log.i(TAG, "Executing SyncAddAlbum. "
                 + "isLocal: " + isLocal + ". authority: " + authority + ". albumId: " + albumId);
+        String resumeKey =
+                getPrefsKey(isLocal, PREFS_KEY_OPERATION_ALBUM_ADD_PREFIX + PREFS_KEY_RESUME);
 
         Trace.beginSection(traceSectionName("executeSyncAddAlbum", isLocal));
-        try (PickerDbFacade.DbWriteOperation operation =
-                     mDbFacade.beginAddAlbumMediaOperation(authority, albumId)) {
+        try {
 
             // We don't need to validate the mediaCollectionId for album_media sync since it's
             // always a full sync
             executePagedSync(uri, /* mediaCollectionId */ null, Arrays.asList(EXTRA_ALBUM_ID),
-                    queryArgs, operation);
+                    queryArgs, resumeKey, OPERATION_ADD_ALBUM, authority, albumId);
         } finally {
             Trace.endSection();
         }
@@ -735,12 +780,13 @@ public class PickerSyncController {
         final Uri uri = getDeletedMediaUri(authority);
 
         Log.i(TAG, "Executing SyncRemove. isLocal: " + isLocal + ". authority: " + authority);
+        String resumeKey =
+                getPrefsKey(isLocal, PREFS_KEY_OPERATION_MEDIA_REMOVE_PREFIX + PREFS_KEY_RESUME);
 
         Trace.beginSection(traceSectionName("executeSyncRemove", isLocal));
-        try (PickerDbFacade.DbWriteOperation operation =
-                     mDbFacade.beginRemoveMediaOperation(authority)) {
+        try {
             executePagedSync(uri, mediaCollectionId, Arrays.asList(EXTRA_SYNC_GENERATION),
-                    queryArgs, operation);
+                    queryArgs, resumeKey, OPERATION_REMOVE_MEDIA, authority);
         } finally {
             Trace.endSection();
         }
@@ -838,6 +884,14 @@ public class PickerSyncController {
         if (bundle == null) {
             editor.remove(getPrefsKey(isLocal, MEDIA_COLLECTION_ID));
             editor.remove(getPrefsKey(isLocal, LAST_MEDIA_SYNC_GENERATION));
+            // Clear any resume keys for page tokens.
+            editor.remove(
+                    getPrefsKey(isLocal, PREFS_KEY_OPERATION_MEDIA_ADD_PREFIX + PREFS_KEY_RESUME));
+            editor.remove(
+                    getPrefsKey(isLocal, PREFS_KEY_OPERATION_ALBUM_ADD_PREFIX + PREFS_KEY_RESUME));
+            editor.remove(
+                    getPrefsKey(
+                            isLocal, PREFS_KEY_OPERATION_MEDIA_REMOVE_PREFIX + PREFS_KEY_RESUME));
         } else {
             final String collectionId = bundle.getString(MEDIA_COLLECTION_ID);
             final long generation = bundle.getLong(LAST_MEDIA_SYNC_GENERATION);
@@ -846,6 +900,42 @@ public class PickerSyncController {
             editor.putLong(getPrefsKey(isLocal, LAST_MEDIA_SYNC_GENERATION), generation);
         }
         editor.apply();
+    }
+
+    /**
+     * Adds the given token to the saved sync preferences.
+     *
+     * @param token The token to remember. A null value will clear the preference.
+     * @param resumeKey The operation's key in sync preferences.
+     */
+    private void rememberNextPageToken(@Nullable String token, String resumeKey) {
+
+        synchronized (mCloudSyncLock) {
+            final SharedPreferences.Editor editor = mSyncPrefs.edit();
+            if (token == null) {
+                Log.d(TAG, String.format("Clearing next page token for key: %s", resumeKey));
+                editor.remove(resumeKey);
+            } else {
+                Log.d(
+                        TAG,
+                        String.format("Saving next page token: %s for key: %s", token, resumeKey));
+                editor.putString(resumeKey, token);
+            }
+            editor.apply();
+        }
+    }
+
+    /**
+     * Fetches the next page token given a resume key. Returns null if no NextPage token was saved.
+     *
+     * @param resumeKey The operation's resume key.
+     * @return The PageToken to resume from, or {@code null} if there is no operation to resume.
+     */
+    @Nullable
+    public String getPageTokenFromResumeKey(String resumeKey) {
+        synchronized (mCloudProviderLock) {
+            return mSyncPrefs.getString(resumeKey, /* defValue= */ null);
+        }
     }
 
     private boolean resetCachedMediaCollectionInfo(@Nullable String authority, boolean isLocal) {
@@ -890,7 +980,6 @@ public class PickerSyncController {
             }
         }
     }
-
 
     @NonNull
     private SyncRequestParams getSyncRequestParamsInternal(@Nullable String authority,
@@ -948,39 +1037,234 @@ public class PickerSyncController {
                 /* cancellationSignal */ null);
     }
 
-    private void executePagedSync(Uri uri, String expectedMediaCollectionId,
-            List<String> expectedHonoredArgs, Bundle queryArgs,
-            PickerDbFacade.DbWriteOperation dbWriteOperation) {
+    /**
+     * Creates a matching {@link PickerDbFacade.DbWriteOperation} for the given
+     * {@link OperationType}.
+     *
+     * @param op {@link OperationType} Which type of paged operation to begin.
+     * @param authority The authority string of the sync provider.
+     * @param albumId An {@link Nullable} AlbumId for album related operations.
+     * @throws IllegalArgumentException When an unexpected op type is encountered.
+     */
+    private PickerDbFacade.DbWriteOperation beginPagedOperation(
+            @OperationType int op, String authority, @Nullable String albumId)
+            throws IllegalArgumentException {
+        switch (op) {
+            case OPERATION_ADD_MEDIA:
+                return mDbFacade.beginAddMediaOperation(authority);
+            case OPERATION_ADD_ALBUM:
+                Objects.requireNonNull(
+                        albumId, "Cannot begin an AddAlbum operation without albumId");
+                return mDbFacade.beginAddAlbumMediaOperation(authority, albumId);
+            case OPERATION_REMOVE_MEDIA:
+                return mDbFacade.beginRemoveMediaOperation(authority);
+            default:
+                throw new IllegalArgumentException(
+                        "Cannot begin a paged operation without an expected operation type.");
+        }
+    }
+
+    /**
+     * Executes a page-by-page sync from the provider.
+     *
+     * @param uri The uri to query for a cursor.
+     * @param expectedMediaCollectionId The expected media collection id.
+     * @param expectedHonoredArgs The arguments that are expected to be present in cursors fetched
+     *     from the provider.
+     * @param queryArgs Any query arguments that are to be passed to the provider when fetching the
+     *     cursor.
+     * @param resumeKey The resumable operation key. This is used to check for previously failed
+     *     operations so they can be resumed at the last successful page, and also to save progress
+     *     between pages.
+     * @param op The DbWriteOperation type. {@link OperationType}
+     * @param authority The authority string of the provider to sync with.
+     */
+    private void executePagedSync(
+            Uri uri,
+            String expectedMediaCollectionId,
+            List<String> expectedHonoredArgs,
+            Bundle queryArgs,
+            @Nullable String resumeKey,
+            @OperationType int op,
+            String authority) {
+        executePagedSync(
+                uri,
+                expectedMediaCollectionId,
+                expectedHonoredArgs,
+                queryArgs,
+                resumeKey,
+                op,
+                authority,
+                /* albumId=*/ null);
+    }
+
+    /**
+     * Executes a page-by-page sync from the provider.
+     *
+     * @param uri The uri to query for a cursor.
+     * @param expectedMediaCollectionId The expected media collection id.
+     * @param expectedHonoredArgs The arguments that are expected to be present in cursors fetched
+     *     from the provider.
+     * @param queryArgs Any query arguments that are to be passed to the provider when fetching the
+     *     cursor.
+     * @param resumeKey The resumable operation key. This is used to check for previously failed
+     *     operations so they can be resumed at the last successful page, and also to save progress
+     *     between pages.
+     * @param op The DbWriteOperation type. {@link OperationType}
+     * @param authority The authority string of the provider to sync with.
+     * @param albumId A {@link Nullable} albumId for album related operations.
+     */
+    private void executePagedSync(
+            Uri uri,
+            String expectedMediaCollectionId,
+            List<String> expectedHonoredArgs,
+            Bundle queryArgs,
+            @Nullable String resumeKey,
+            @OperationType int op,
+            String authority,
+            @Nullable String albumId) {
         Trace.beginSection(traceSectionName("executePagedSync"));
+
         try {
-            int cursorCount = 0;
             int totalRowcount = 0;
             // Set to check the uniqueness of tokens across pages.
             Set<String> tokens = new ArraySet<>();
 
-            String nextPageToken = null;
+            String nextPageToken = getPageTokenFromResumeKey(resumeKey);
+            if (nextPageToken != null) {
+                Log.i(
+                        TAG,
+                        String.format(
+                                "Resumable operation found for %s, resuming with page token %s",
+                                resumeKey, nextPageToken));
+            }
+
             do {
-                if (nextPageToken != null) {
-                    queryArgs.putString(EXTRA_PAGE_TOKEN, nextPageToken);
+                String updateDateTakenMs = null;
+                try (PickerDbFacade.DbWriteOperation operation =
+                        beginPagedOperation(op, authority, albumId)) {
+
+                    if (nextPageToken != null) {
+                        queryArgs.putString(EXTRA_PAGE_TOKEN, nextPageToken);
+                    }
+
+                    try (Cursor cursor = query(uri, queryArgs)) {
+                        nextPageToken =
+                                validateCursor(
+                                        cursor,
+                                        expectedMediaCollectionId,
+                                        expectedHonoredArgs,
+                                        tokens);
+
+
+                        int writeCount = operation.execute(cursor);
+
+                        totalRowcount += writeCount;
+
+                        // Before the cursor is closed pull the date taken ms for the first row.
+                        updateDateTakenMs = getFirstDateTakenMsInCursor(cursor);
+                    }
+                    operation.setSuccess();
+
+                } catch (IllegalArgumentException ex) {
+                    Log.e(TAG, String.format("Failed to open DbWriteOperation for op: %d", op), ex);
+                    return;
                 }
 
-                try (Cursor cursor = query(uri, queryArgs)) {
-                    nextPageToken = validateCursor(cursor, expectedMediaCollectionId,
-                            expectedHonoredArgs, tokens);
+                // Keep track of the next page token in case this operation crashes and is
+                // later resumed.
+                rememberNextPageToken(nextPageToken, resumeKey);
 
-                    int writeCount = dbWriteOperation.execute(cursor);
+                // Emit notification that new data has arrived in the database.
+                if (updateDateTakenMs != null) {
+                    Uri notification = buildNotificationUri(op, albumId, updateDateTakenMs);
 
-                    totalRowcount += writeCount;
-                    cursorCount += cursor.getCount();
+                    if (notification != null) {
+                        mContext.getContentResolver()
+                                .notifyChange(/* itemUri= */ notification, /* observer= */ null);
+                    }
                 }
+
             } while (nextPageToken != null);
 
-            dbWriteOperation.setSuccess();
-            Log.i(TAG, "Paged sync successful. QueryArgs: " + queryArgs + ". Result count: "
-                    + totalRowcount + ". Cursor count: " + cursorCount);
+            Log.i(
+                    TAG,
+                    "Paged sync successful. QueryArgs: "
+                            + queryArgs
+                            + " Total Rows: "
+                            + totalRowcount);
         } finally {
             Trace.endSection();
         }
+    }
+
+    /**
+     * Extracts the {@link MediaColumns.DATE_TAKEN_MILLIS} from the first row in the cursor.
+     *
+     * @param cursor The cursor to read from.
+     * @return Either the column value if it exists, or {@code null} if it doesn't.
+     */
+    @Nullable
+    private String getFirstDateTakenMsInCursor(Cursor cursor) {
+        if (cursor.getCount() > 0) {
+            cursor.moveToFirst();
+            return getCursorString(cursor, MediaColumns.DATE_TAKEN_MILLIS);
+        }
+        return null;
+    }
+
+    /**
+     * Assembles a ContentObserver notification uri for the given operation.
+     *
+     * @param op {@link OperationType} the operation to notify has completed.
+     * @param albumId An optional album id if this is an album based operation.
+     * @param dateTakenMs The notification data; the {@link MediaColumns.DATE_TAKEN_MILLIS} of the
+     *     first row updated.
+     * @return the assembled notification uri.
+     */
+    @Nullable
+    private Uri buildNotificationUri(
+            @NonNull @OperationType int op,
+            @Nullable String albumId,
+            @Nullable String dateTakenMs) {
+
+        Objects.requireNonNull(
+                dateTakenMs, "Cannot notify subscribers without a date taken timestamp.");
+
+        // base: content://media/picker_internal/
+        Uri.Builder builder = PICKER_INTERNAL_URI.buildUpon().appendPath(UPDATE);
+
+        switch (op) {
+            case OPERATION_ADD_MEDIA:
+                // content://media/picker_internal/update/media
+                builder.appendPath(MEDIA);
+                break;
+            case OPERATION_ADD_ALBUM:
+                // content://media/picker_internal/update/album_content/${albumId}
+                builder.appendPath(ALBUM_CONTENT);
+                builder.appendPath(albumId);
+                break;
+            case OPERATION_REMOVE_MEDIA:
+                if (albumId != null) {
+                    // content://media/picker_internal/update/album_content/${albumId}
+                    builder.appendPath(ALBUM_CONTENT);
+                    builder.appendPath(albumId);
+                } else {
+                    // content://media/picker_internal/update/media
+                    builder.appendPath(MEDIA);
+                }
+                break;
+            default:
+                Log.w(
+                        TAG,
+                        String.format(
+                                "Requested operation (%d) is not supported for notifications.",
+                                op));
+                return null;
+        }
+
+        builder.appendPath(dateTakenMs);
+        return builder.build();
     }
 
     /**

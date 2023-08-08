@@ -22,6 +22,7 @@ import static android.provider.CloudMediaProviderContract.AlbumColumns.ALBUM_ID_
 import static android.provider.CloudMediaProviderContract.MediaColumns;
 import static android.provider.MediaStore.PickerMediaColumns;
 
+import static com.android.providers.media.photopicker.PickerSyncController.PAGE_SIZE;
 import static com.android.providers.media.photopicker.util.CursorUtils.getCursorLong;
 import static com.android.providers.media.photopicker.util.CursorUtils.getCursorString;
 import static com.android.providers.media.util.DatabaseUtils.replaceMatchAnyChar;
@@ -47,6 +48,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.providers.media.photopicker.PickerSyncController;
+import com.android.providers.media.photopicker.data.model.Item;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -442,6 +444,12 @@ public class PickerDbFacade {
             final boolean isLocal = isLocal();
             final SQLiteQueryBuilder qb = isLocal ? QB_MATCH_LOCAL_ONLY : QB_MATCH_CLOUD;
             int counter = 0;
+
+            if (cursor.getCount() > PAGE_SIZE) {
+                Log.w(TAG,
+                        String.format("Expected a cursor page size of %d, but received a cursor "
+                            + "with %d rows instead.", PAGE_SIZE, cursor.getCount()));
+            }
 
             while (cursor.moveToNext()) {
                 ContentValues values = cursorToContentValue(cursor, isLocal);
@@ -929,6 +937,8 @@ public class PickerDbFacade {
             getProjectionAuthorityLocked(),
             getProjectionDataLocked(MediaColumns.DATA),
             getProjectionId(MediaColumns.ID),
+            // The id in the picker.db table represents the row id. This is used in UI pagination.
+            getProjectionSimple(KEY_ID, Item.ROW_ID),
             getProjectionSimple(KEY_DATE_TAKEN_MS, MediaColumns.DATE_TAKEN_MILLIS),
             getProjectionSimple(KEY_SYNC_GENERATION, MediaColumns.SYNC_GENERATION),
             getProjectionSimple(KEY_SIZE_BYTES, MediaColumns.SIZE_BYTES),
@@ -1352,6 +1362,12 @@ public class PickerDbFacade {
             final String albumId = getAlbumId();
             final SQLiteQueryBuilder qb = createAlbumMediaQueryBuilder(isLocal);
             int counter = 0;
+
+            if (cursor.getCount() > PAGE_SIZE) {
+                Log.w(TAG,
+                        String.format("Expected a cursor page size of %d, but received a cursor "
+                            + "with %d rows instead.", PAGE_SIZE, cursor.getCount()));
+            }
 
             while (cursor.moveToNext()) {
                 ContentValues values = cursorToContentValue(cursor, isLocal, albumId);
