@@ -103,7 +103,9 @@ const bool IS_OS_DEBUGABLE = android::base::GetIntProperty("ro.debuggable", 0);
 // Stolen from: android_filesystem_config.h
 #define AID_APP_START 10000
 
-constexpr size_t MAX_READ_SIZE = 128 * 1024;
+#define FUSE_MAX_MAX_PAGES 256
+
+const size_t MAX_READ_SIZE = FUSE_MAX_MAX_PAGES * getpagesize();
 // Stolen from: UserHandle#getUserId
 constexpr int PER_USER_RANGE = 100000;
 
@@ -1979,7 +1981,8 @@ static void pf_readdir_postfilter(fuse_req_t req, fuse_ino_t ino, uint32_t error
         struct fuse_dirent* dirent_out = (struct fuse_dirent*)((char*)dirents_out + fro->size);
         struct stat stats;
         int err;
-        std::string child_path = path + "/" + dirent_in->name;
+        std::string child_path = path + "/";
+        child_path.append(dirent_in->name, dirent_in->namelen);
 
         in += sizeof(*dirent_in) + round_up(dirent_in->namelen, sizeof(uint64_t));
         err = stat(child_path.c_str(), &stats);
