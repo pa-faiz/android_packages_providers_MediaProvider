@@ -21,7 +21,6 @@ import static android.provider.MediaStore.ACTION_PICK_IMAGES;
 import static android.provider.MediaStore.ACTION_USER_SELECT_IMAGES_FOR_APP;
 import static android.provider.MediaStore.grantMediaReadForPackage;
 
-import static com.android.providers.media.MediaApplication.getConfigStore;
 import static com.android.providers.media.photopicker.PhotoPickerSettingsActivity.EXTRA_CURRENT_USER_ID;
 import static com.android.providers.media.photopicker.data.PickerResult.getPickerResponseIntent;
 import static com.android.providers.media.photopicker.data.PickerResult.getPickerUrisForItems;
@@ -582,7 +581,7 @@ public class PhotoPickerActivity extends AppCompatActivity {
 
         final boolean isGetContent = isGetContentAction();
         final boolean isPickImages = isPickImagesAction();
-        final ConfigStore cs = getConfigStore();
+        final ConfigStore cs = mPickerViewModel.getConfigStore();
 
         if (getIntent().hasExtra(EXTRA_PRELOAD_SELECTED)) {
             if (Build.isDebuggable()
@@ -841,7 +840,32 @@ public class PhotoPickerActivity extends AppCompatActivity {
      * Reset to Photo Picker initial launch state (Photos grid tab) in personal profile mode.
      */
     private void resetToPersonalProfile() {
+        // Clear all the fragments in the FragmentManager
+        final FragmentManager fragmentManager = getSupportFragmentManager();
+        fragmentManager.popBackStackImmediate(/* name */ null,
+                FragmentManager.POP_BACK_STACK_INCLUSIVE);
+
+        // Reset all content to the personal profile
         mPickerViewModel.resetToPersonalProfile();
+
+        // Set up the fragments same as the initial launch state
+        setupInitialLaunchState();
+    }
+
+    /**
+     * Reset to Photo Picker initial launch state (Photos grid tab) in the current profile mode.
+     */
+    @VisibleForTesting
+    public void resetInCurrentProfile() {
+        // Clear all the fragments in the FragmentManager
+        final FragmentManager fragmentManager = getSupportFragmentManager();
+        fragmentManager.popBackStackImmediate(/* name */ null,
+                FragmentManager.POP_BACK_STACK_INCLUSIVE);
+
+        // Reset all content in the current profile
+        mPickerViewModel.resetAllContentInCurrentProfile();
+
+        // Set up the fragments same as the initial launch state
         setupInitialLaunchState();
     }
 
@@ -971,11 +995,6 @@ public class PhotoPickerActivity extends AppCompatActivity {
         }
 
         private void switchToPersonalProfileInitialLaunchState() {
-            final FragmentManager fragmentManager = getSupportFragmentManager();
-            // Clear all back stacks in FragmentManager
-            fragmentManager.popBackStackImmediate(/* name */ null,
-                    FragmentManager.POP_BACK_STACK_INCLUSIVE);
-
             // We reset the state of the PhotoPicker as we do not want to make any
             // assumptions on the state of the PhotoPicker when it was in Work Profile mode.
             resetToPersonalProfile();
@@ -1001,7 +1020,7 @@ public class PhotoPickerActivity extends AppCompatActivity {
         mPickerViewModel.shouldRefreshUiLiveData()
                 .observe(this, shouldRefresh -> {
                     if (shouldRefresh && !mPickerViewModel.shouldShowOnlyLocalFeatures()) {
-                        mPickerViewModel.resetAllContentInCurrentProfile();
+                        resetInCurrentProfile();
                     }
                 });
     }
