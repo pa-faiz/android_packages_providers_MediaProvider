@@ -151,7 +151,7 @@ public class PhotosTabFragment extends TabFragment {
                             ACTION_VIEW_CREATED,
                             new PaginationParameters(
                                     mPageSize,
-                                    /* dateBeforeMs */ -1,
+                                    /* dateBeforeMs */ Long.MIN_VALUE,
                                     /* rowId */ -1))
                     .observe(this, itemListResult -> {
                         onChangeMediaItems(itemListResult, adapter);
@@ -168,7 +168,7 @@ public class PhotosTabFragment extends TabFragment {
                             ACTION_VIEW_CREATED,
                             new PaginationParameters(
                                      mPageSize,
-                                    /* dateBeforeMs */ -1,
+                                    /* dateBeforeMs */ Long.MIN_VALUE,
                                     /* rowId */ -1))
                     .observe(this, itemListResult -> {
                         onChangeMediaItems(itemListResult, adapter);
@@ -321,7 +321,8 @@ public class PhotosTabFragment extends TabFragment {
                 mPickerViewModel.getPaginatedItemsForAction(
                         ACTION_REFRESH_ITEMS,
                         new PaginationParameters(firstVisibleItemPosition
-                                + PaginationParameters.PAGINATION_PAGE_SIZE_ITEMS, -1, -1));
+                                + PaginationParameters.PAGINATION_PAGE_SIZE_ITEMS,
+                                /*dateBeforeMs*/ Long.MIN_VALUE, -1));
             }
         }
     }
@@ -335,7 +336,11 @@ public class PhotosTabFragment extends TabFragment {
         } else {
             adapter.setMediaItems(itemList.getItems(), itemList.getAction());
             // Handle emptyView's visibility
-            updateVisibilityForEmptyView(/* shouldShowEmptyView */ itemList.getItems().size() == 0);
+            boolean shouldShowEmptyView = (itemList.getItems().size() == 0);
+            updateVisibilityForEmptyView(shouldShowEmptyView);
+            if (shouldShowEmptyView) {
+                mPickerViewModel.setEmptyPageDisplayed(true);
+            }
         }
         mIsCurrentPageLoading = false;
         mAtLeastOnePageLoaded = true;
@@ -356,6 +361,11 @@ public class PhotosTabFragment extends TabFragment {
                     if (mSelection.canSelectMultiple()) {
                         final boolean isSelectedBefore = view.isSelected();
 
+                        Item item = (Item) view.getTag();
+                        if (item.isPreGranted()) {
+                            // Since currently a pre-granted item can't be un-selected.
+                            return;
+                        }
                         if (isSelectedBefore) {
                             mSelection.removeSelectedItem((Item) view.getTag());
                             mSelection.removeCheckedItemIndex((Item) view.getTag());
@@ -373,7 +383,6 @@ public class PhotosTabFragment extends TabFragment {
                                 Snackbar.make(view, message, Snackbar.LENGTH_SHORT).show();
                                 return;
                             } else {
-                                final Item item = (Item) view.getTag();
                                 mSelection.addSelectedItem(item);
                                 mPickerViewModel.logMediaItemSelected(item, mCategory, position);
                             }
