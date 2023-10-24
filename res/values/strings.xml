@@ -21,10 +21,6 @@
     <!-- Label to show client applications a short description of storage location -->
     <string name="storage_description">Local storage</string>
 
-    <!-- TODO(b/246345209): This string is unused. Update app_label string to "Media" -->
-    <!-- and delete picker_app_label  -->
-    <string name="app_label">Media Storage</string>
-
     <!-- Label to show to user for this package and for Photo picker. -->
     <string name="picker_app_label">Media picker</string>
 
@@ -147,7 +143,7 @@
     <!-- The message for empty message on Albums tab in PhotoPicker when the item count is zero. [CHAR LIMIT=NONE] -->
     <string name="picker_albums_empty_message">No albums</string>
 
-    <!-- PhotoPicker view selected action text. [CHAR LIMIT=80] -->
+    <!-- PhotoPicker view selected action text. [CHAR LIMIT=17] -->
     <string name="picker_view_selected">View selected</string>
 
     <!-- The text of the photos tab for PhotoPicker. [CHAR LIMIT=30] -->
@@ -512,7 +508,7 @@
     <string name="transcode_progress_channel">Native Transcode Progress</string>
 
     <!-- Dialog error message-->
-    <string name="dialog_error_message">Sorry, the photos you selected are unavailable. Please try again.</string>
+    <string name="dialog_error_message">Try again later. Your photos will be available once the issue is resolved.</string>
 
     <!-- Dialog error title-->
     <string name="dialog_error_title">Can\'t load some Photos</string>
