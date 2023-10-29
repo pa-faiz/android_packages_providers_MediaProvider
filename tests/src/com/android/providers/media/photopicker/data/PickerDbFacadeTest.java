@@ -40,6 +40,7 @@ import android.provider.MediaStore.PickerMediaColumns;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.runner.AndroidJUnit4;
 
+import com.android.providers.media.PickerUriResolver;
 import com.android.providers.media.ProjectionHelper;
 import com.android.providers.media.photopicker.sync.SyncTracker;
 import com.android.providers.media.photopicker.sync.SyncTrackerRegistry;
@@ -215,6 +216,33 @@ public class PickerDbFacadeTest {
     }
 
     @Test
+    public void testMediaSortOrder() {
+        final Cursor cursor1 = getLocalMediaCursor(LOCAL_ID_1, DATE_TAKEN_MS);
+        final Cursor cursor2 = getCloudMediaCursor(CLOUD_ID_1, null, DATE_TAKEN_MS);
+        final Cursor cursor3 = getLocalMediaCursor(LOCAL_ID_2, DATE_TAKEN_MS + 1);
+
+        assertAddMediaOperation(LOCAL_PROVIDER, cursor1, 1);
+        assertAddMediaOperation(CLOUD_PROVIDER, cursor2, 1);
+        assertAddMediaOperation(LOCAL_PROVIDER, cursor3, 1);
+
+        try (Cursor cr = queryMediaAll()) {
+            assertThat(cr.getCount()).isEqualTo(/* expected= */ 3);
+
+            cr.moveToFirst();
+            // Latest items should show up first.
+            assertCloudMediaCursor(cr, LOCAL_ID_2, DATE_TAKEN_MS + 1);
+
+            cr.moveToNext();
+            // If the date taken is the same for 2 or more items, they should be sorted in the order
+            // of their insertion in the database with the latest row inserted first.
+            assertCloudMediaCursor(cr, CLOUD_ID_1, DATE_TAKEN_MS);
+
+            cr.moveToNext();
+            assertCloudMediaCursor(cr, LOCAL_ID_1, DATE_TAKEN_MS);
+        }
+    }
+
+    @Test
     public void testAddLocalAlbumMedia() {
         Cursor cursor1 = getAlbumMediaCursor(LOCAL_ID, /* cloud id */ null, DATE_TAKEN_MS + 1);
         Cursor cursor2 = getAlbumMediaCursor(LOCAL_ID, /* cloud id */ null, DATE_TAKEN_MS + 2);
@@ -323,6 +351,33 @@ public class PickerDbFacadeTest {
             assertThat(albumCursor.getCount()).isEqualTo(1);
             albumCursor.moveToFirst();
             assertCloudMediaCursor(albumCursor, CLOUD_ID, DATE_TAKEN_MS);
+        }
+    }
+
+    @Test
+    public void testAlbumMediaSortOrder() {
+        final Cursor cursor1 = getAlbumMediaCursor(null, CLOUD_ID_1, DATE_TAKEN_MS);
+        final Cursor cursor2 = getAlbumMediaCursor(LOCAL_ID_1, null, DATE_TAKEN_MS);
+        final Cursor cursor3 = getAlbumMediaCursor(null, CLOUD_ID_2, DATE_TAKEN_MS + 1);
+
+        assertAddAlbumMediaOperation(CLOUD_PROVIDER, cursor1, 1, ALBUM_ID);
+        assertAddAlbumMediaOperation(LOCAL_PROVIDER, cursor2, 1, ALBUM_ID);
+        assertAddAlbumMediaOperation(CLOUD_PROVIDER, cursor3, 1, ALBUM_ID);
+
+        try (Cursor cr = queryAlbumMedia(ALBUM_ID, false)) {
+            assertThat(cr.getCount()).isEqualTo(/* expected= */ 3);
+
+            cr.moveToFirst();
+            // Latest items should show up first.
+            assertCloudMediaCursor(cr, CLOUD_ID_2, DATE_TAKEN_MS + 1);
+
+            cr.moveToNext();
+            // If the date taken is the same for 2 or more items, they should be sorted in the order
+            // of their insertion in the database with the latest row inserted first.
+            assertCloudMediaCursor(cr, LOCAL_ID_1, DATE_TAKEN_MS);
+
+            cr.moveToNext();
+            assertCloudMediaCursor(cr, CLOUD_ID_1, DATE_TAKEN_MS);
         }
     }
 
@@ -1046,19 +1101,28 @@ public class PickerDbFacadeTest {
         // Assert all projection columns
         final String[] allProjection = mProjectionHelper.getProjectionMap(
                 PickerMediaColumns.class).keySet().toArray(new String[0]);
-        try (Cursor cr = mFacade.queryMediaIdForApps(LOCAL_PROVIDER, LOCAL_ID,
-                allProjection)) {
+        try (Cursor cr = mFacade.queryMediaIdForApps(PickerUriResolver.PICKER_SEGMENT,
+                LOCAL_PROVIDER, LOCAL_ID, allProjection)) {
             assertThat(cr.getCount()).isEqualTo(1);
 
             cr.moveToFirst();
-            assertMediaStoreCursor(cr, LOCAL_ID, DATE_TAKEN_MS);
+            assertMediaStoreCursor(cr, LOCAL_ID, DATE_TAKEN_MS, PickerUriResolver.PICKER_SEGMENT);
+        }
+
+        try (Cursor cr = mFacade.queryMediaIdForApps(PickerUriResolver.PICKER_GET_CONTENT_SEGMENT,
+                LOCAL_PROVIDER, LOCAL_ID, allProjection)) {
+            assertThat(cr.getCount()).isEqualTo(1);
+
+            cr.moveToFirst();
+            assertMediaStoreCursor(cr, LOCAL_ID, DATE_TAKEN_MS,
+                    PickerUriResolver.PICKER_GET_CONTENT_SEGMENT);
         }
 
         // Assert one projection column
         final String[] oneProjection = new String[] { PickerMediaColumns.DATE_TAKEN };
 
-        try (Cursor cr = mFacade.queryMediaIdForApps(CLOUD_PROVIDER, CLOUD_ID,
-                oneProjection)) {
+        try (Cursor cr = mFacade.queryMediaIdForApps(PickerUriResolver.PICKER_SEGMENT,
+                CLOUD_PROVIDER, CLOUD_ID, oneProjection)) {
             assertThat(cr.getCount()).isEqualTo(1);
 
             cr.moveToFirst();
@@ -1073,8 +1137,8 @@ public class PickerDbFacadeTest {
                 invalidColumn
         };
 
-        try (Cursor cr = mFacade.queryMediaIdForApps(CLOUD_PROVIDER, CLOUD_ID,
-                invalidProjection)) {
+        try (Cursor cr = mFacade.queryMediaIdForApps(PickerUriResolver.PICKER_SEGMENT,
+                CLOUD_PROVIDER, CLOUD_ID, invalidProjection)) {
             assertThat(cr.getCount()).isEqualTo(1);
 
             cr.moveToFirst();
@@ -1864,8 +1928,8 @@ public class PickerDbFacadeTest {
         return mediaId + getExtensionFromMimeType(mimeType);
     }
 
-    private static String getData(String authority, String displayName) {
-        return "/sdcard/.transforms/synthetic/picker/0/" + authority + "/media/"
+    private static String getData(String authority, String displayName, String pickerSegmentType) {
+        return "/sdcard/.transforms/synthetic/" + pickerSegmentType + "/0/" + authority + "/media/"
                 + displayName;
     }
 
@@ -1885,8 +1949,10 @@ public class PickerDbFacadeTest {
 
     private static void assertCloudMediaCursor(Cursor cursor, String id, String mimeType) {
         final String displayName = getDisplayName(id, mimeType);
-        final String localData = getData(LOCAL_PROVIDER, displayName);
-        final String cloudData = getData(CLOUD_PROVIDER, displayName);
+        final String localData = getData(LOCAL_PROVIDER, displayName,
+                PickerUriResolver.PICKER_SEGMENT);
+        final String cloudData = getData(CLOUD_PROVIDER, displayName,
+                PickerUriResolver.PICKER_SEGMENT);
 
         assertThat(cursor.getString(cursor.getColumnIndex(MediaColumns.ID)))
                 .isEqualTo(id);
@@ -1942,10 +2008,11 @@ public class PickerDbFacadeTest {
         }
     }
 
-    private static void assertMediaStoreCursor(Cursor cursor, String id, long dateTakenMs) {
+    private static void assertMediaStoreCursor(Cursor cursor, String id, long dateTakenMs,
+            String pickerSegmentType) {
         final String displayName = getDisplayName(id, MP4_VIDEO_MIME_TYPE);
-        final String localData = getData(LOCAL_PROVIDER, displayName);
-        final String cloudData = getData(CLOUD_PROVIDER, displayName);
+        final String localData = getData(LOCAL_PROVIDER, displayName, pickerSegmentType);
+        final String cloudData = getData(CLOUD_PROVIDER, displayName, pickerSegmentType);
 
         assertThat(cursor.getString(cursor.getColumnIndex(PickerMediaColumns.DISPLAY_NAME)))
                 .isEqualTo(displayName);
