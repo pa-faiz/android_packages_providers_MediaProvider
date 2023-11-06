@@ -23,6 +23,7 @@ import static com.android.providers.media.photopicker.util.LayoutModeUtils.MODE_
 
 import android.animation.ObjectAnimator;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -48,6 +49,7 @@ import com.android.providers.media.photopicker.data.PaginationParameters;
 import com.android.providers.media.photopicker.data.model.Category;
 import com.android.providers.media.photopicker.data.model.Item;
 import com.android.providers.media.photopicker.util.LayoutModeUtils;
+import com.android.providers.media.photopicker.util.MimeFilterUtils;
 import com.android.providers.media.photopicker.viewmodel.PickerViewModel;
 import com.android.providers.media.util.StringUtils;
 
@@ -64,6 +66,7 @@ import java.util.Objects;
  * Photos tab fragment for showing the photos
  */
 public class PhotosTabFragment extends TabFragment {
+    private static final String TAG = PhotosTabFragment.class.getSimpleName();
     private static final int MINIMUM_SPAN_COUNT = 3;
     private static final int GRID_COLUMN_COUNT = 3;
     private static final String FRAGMENT_TAG = "PhotosTabFragment";
@@ -101,6 +104,11 @@ public class PhotosTabFragment extends TabFragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         final Context context = getContext();
+        if (context == null) {
+            Log.e(TAG, "Could not create fragment completely because the fragment is not "
+                    + "attached.");
+            return;
+        }
 
         // Init is only required for album content tab fragments when the fragment is not being
         // recreated from a previous state.
@@ -141,6 +149,11 @@ public class PhotosTabFragment extends TabFragment {
                 mOnChooseAppBannerEventListener, mOnCloudMediaAvailableBannerEventListener,
                 mOnAccountUpdatedBannerEventListener, mOnChooseAccountBannerEventListener,
                 mOnMediaItemHoverListener);
+
+        // initialise pre-granted items is necessary.
+        Intent activityIntent = requireActivity().getIntent();
+        mPickerViewModel.initialisePreGrantsIfNecessary(mPickerViewModel.getSelection(),
+                activityIntent.getExtras(), MimeFilterUtils.getMimeTypeFilters(activityIntent));
 
         if (mCategory.isDefault()) {
             mPageSize = mIsCloudMediaInPhotoPickerEnabled
@@ -184,7 +197,7 @@ public class PhotosTabFragment extends TabFragment {
         mRecyclerView.setColumnWidth(photoSize + spacing);
         mRecyclerView.setMinimumSpanCount(MINIMUM_SPAN_COUNT);
 
-        setLayoutManager(adapter, GRID_COLUMN_COUNT);
+        setLayoutManager(context, adapter, GRID_COLUMN_COUNT);
         mRecyclerView.setAdapter(adapter);
         mRecyclerView.addItemDecoration(itemDecoration);
         if (mIsCloudMediaInPhotoPickerEnabled) {
