@@ -99,10 +99,6 @@ android_app {
         strict_updatability_linting: true,
         baseline_filename: "lint-baseline.xml",
     },
-
-    apex_available: [
-        "com.android.mediaprovider",
-    ],
 }
 
 // Used by MediaProvider and MediaProviderTests
