@@ -9,6 +9,7 @@ apex {
     manifest: "apex_manifest.json",
     apps: ["MediaProvider", "PdfViewer"],
     compat_configs: ["media-provider-platform-compat-config"],
+    jni_libs: ["libpdfclient"],
 }
 
 apex_defaults {
@@ -84,6 +85,7 @@ bootclasspath_fragment {
         // API.
         split_packages: [
             "android.graphics.pdf",
+            "android.graphics.pdf.flags",
             "android.provider",
         ],
     },
