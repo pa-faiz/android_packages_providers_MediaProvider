@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 The Android Open Source Project
+ * Copyright 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
-package android.graphics.pdf;
+package com.android.photopicker.core.user
 
-/**
- * Placeholder class for new PDF viewer inside MediaProvider module.
-*
-* @hide
-*
-*/
-public class Placeholder {
+/** Result enumeration class for a Switch Profile request made to [UserMonitor]. */
+enum class SwitchUserProfileResult {
+    SUCCESS,
+    FAILED_UNKNOWN_PROFILE,
+    FAILED_PROFILE_DISABLED
 }
