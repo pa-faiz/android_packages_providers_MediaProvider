@@ -20,3 +20,17 @@ flag {
     description: "Controls exposure of the ACCESS_MEDIA_OWNER_PACKAGE_NAME permission name"
     bug: "309920631"
 }
+
+flag {
+    name: "picker_recent_selection"
+    namespace: "mediaprovider"
+    description: "This flag will enable selection of items based on recency of selection in picker choice."
+    bug: "323132658"
+}
+
+flag {
+    name: "picker_accent_color"
+    namespace: "mediaprovider"
+    description: "This flag will enable setting an accent color in the photopicker"
+    bug: "303784053"
+}
