@@ -1,6 +1,7 @@
 package {
     // See: http://go/android-license-faq
     default_applicable_licenses: ["Android-Apache-2.0"],
+    default_team: "trendy_team_android_storage",
 }
 
 android_app {
@@ -181,6 +182,8 @@ java_aconfig_library {
     name: "mediaprovider_flags_java_lib",
     aconfig_declarations: "mediaprovider_flags",
     min_sdk_version: "30",
+    sdk_version: "module_current",
+    libs: ["framework-configinfrastructure"],
     apex_available: [
         "com.android.mediaprovider",
     ],

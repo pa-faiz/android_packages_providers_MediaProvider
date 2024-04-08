@@ -17,11 +17,12 @@
 package android.graphics.pdf.content;
 
 import android.annotation.FlaggedApi;
+import android.annotation.FloatRange;
+import android.annotation.IntRange;
 import android.annotation.NonNull;
-import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.pdf.flags.Flags;
-
-import com.google.common.base.Preconditions;
+import android.graphics.pdf.utils.Preconditions;
 
 import java.util.List;
 
@@ -31,9 +32,9 @@ import java.util.List;
  * document
  */
 @FlaggedApi(Flags.FLAG_ENABLE_PDF_VIEWER)
-public class PdfPageGotoLinkContent {
+public final class PdfPageGotoLinkContent {
     @NonNull
-    private final List<Rect> mBounds;
+    private final List<RectF> mBounds;
     @NonNull
     private final Destination mDestination;
 
@@ -42,12 +43,12 @@ public class PdfPageGotoLinkContent {
      * Creates a new instance of {@link PdfPageGotoLinkContent} using the bounds of the goto link
      * and the destination where it is directing
      *
-     * @param bounds Bounds which envelop the goto link
+     * @param bounds      Bounds which envelop the goto link
      * @param destination Destination where the goto link is directing
      * @throws NullPointerException     If bounds or destination is null.
      * @throws IllegalArgumentException If the bounds list is empty.
      */
-    public PdfPageGotoLinkContent(@NonNull List<Rect> bounds, @NonNull Destination
+    public PdfPageGotoLinkContent(@NonNull List<RectF> bounds, @NonNull Destination
             destination) {
         Preconditions.checkNotNull(bounds, "Bounds cannot be null");
         Preconditions.checkArgument(!bounds.isEmpty(), "Bounds cannot be empty");
@@ -58,14 +59,19 @@ public class PdfPageGotoLinkContent {
 
 
     /**
-     * Gets the bounds of a {@link PdfPageGotoLinkContent} represented as a list of {@link Rect}.
-     * Links which are spread across multiple lines will be surrounded by multiple {@link Rect}
+     * Gets the bounds of a {@link PdfPageGotoLinkContent} represented as a list of {@link RectF}.
+     * Links which are spread across multiple lines will be surrounded by multiple {@link RectF}
      * in order of viewing.
+     *
+     * <p><strong>Note:</strong> Each {@link RectF} represents a bound of the goto link in a single
+     * line and defines the coordinates of its 4 edges (left, top, right and bottom) in
+     * points (1/72"). The developer will need to render the highlighter as well as
+     * intercept the touch events for functionalities such as clicking the link.
      *
      * @return The bounds of the goto link.
      */
     @NonNull
-    public List<Rect> getBounds() {
+    public List<RectF> getBounds() {
         return mBounds;
     }
 
@@ -83,7 +89,7 @@ public class PdfPageGotoLinkContent {
     /**
      * Represents the content associated with the destination where a goto link is directing
      */
-    public static class Destination {
+    public static final class Destination {
         private final int mPageNumber;
 
         private final float mXCoordinate;
@@ -95,14 +101,15 @@ public class PdfPageGotoLinkContent {
          * Creates a new instance of {@link Destination} using the page number, x coordinate, and
          * y coordinate of the destination where goto link is directing, and the zoom factor of the
          * page when goto link takes to the destination
+         * <p><strong>Note:</strong> Here (0,0) represents top-left corner of the page
          *
-         * @param pageNumber Page number of the goto link Destination
+         * @param pageNumber  Page number of the goto link Destination
          * @param xCoordinate X coordinate of the goto link Destination in points (1/72")
          * @param yCoordinate Y coordinate of the goto link Destination in points (1/72")
-         * @param zoom Zoom factor {@link Destination#getZoom()} of the page when goto link
-         * takes to the destination
+         * @param zoom        Zoom factor {@link Destination#getZoom()} of the page when goto link
+         *                    takes to the destination
          * @throws IllegalArgumentException If pageNumber or either of the coordinates or zoom are
-         * less than zero
+         *                                  less than zero
          */
         public Destination(int pageNumber, float xCoordinate, float yCoordinate, float zoom) {
             Preconditions.checkArgument(pageNumber >= 0, "Page number must be"
@@ -126,32 +133,35 @@ public class PdfPageGotoLinkContent {
          *
          * @return page number of the destination where goto link is directing the user.
          */
+        @IntRange(from = 0)
         public int getPageNumber() {
             return mPageNumber;
         }
 
 
         /**
-         * Gets the x coordinate of the destination where the {@link PdfPageGotoLinkContent}
-         * is directing.
+         * Gets the x coordinate in points (1/72") of the destination where
+         * the {@link PdfPageGotoLinkContent} is directing.
          * <p><strong>Note:</strong> If underlying pdfium library can't determine the x coordinate,
          * it will be set to 0
          *
          * @return x coordinate of the Destination where the goto link is directing the user.
          */
+        @FloatRange(from = 0.0f)
         public float getXCoordinate() {
             return mXCoordinate;
         }
 
 
         /**
-         * Gets the y coordinate of the destination where the {@link PdfPageGotoLinkContent}
-         * is directing.
+         * Gets the y coordinate in points (1/72") of the destination where
+         * the {@link PdfPageGotoLinkContent} is directing.
          * <p><strong>Note:</strong> If underlying pdfium library can't determine the y coordinate,
          * it will be set to 0
          *
          * @return y coordinate of the Destination where the goto link is directing the user.
          */
+        @FloatRange(from = 0.0f)
         public float getYCoordinate() {
             return mYCoordinate;
         }
@@ -159,13 +169,13 @@ public class PdfPageGotoLinkContent {
 
         /**
          * Gets the zoom factor of the page when the goto link takes to the destination
-         * <p><strong>Note:</strong> If there is no zoom value embedded, default value of zoom
-         * will be zero. Otherwise it will be less than 1.0f in case of zoom out and greater
+         * <p><strong>Note:</strong> If there is no zoom value embedded, default value of Zoom
+         * will be zero. Otherwise, it will be less than 1.0f in case of zoom out and greater
          * than 1.0f in case of zoom in.
-         *
          *
          * @return zoom factor of the page when the goto link takes to the destination
          */
+        @FloatRange(from = 0.0f)
         public float getZoom() {
             return mZoom;
         }

@@ -22,8 +22,7 @@ import android.annotation.Nullable;
 import android.graphics.Point;
 import android.graphics.pdf.content.PdfPageTextContent;
 import android.graphics.pdf.flags.Flags;
-
-import com.google.common.base.Preconditions;
+import android.graphics.pdf.utils.Preconditions;
 
 /**
  * Represents one edge of the selected content.
@@ -74,8 +73,10 @@ public class SelectionBoundary {
     }
 
     /**
-     * Gets the {@link Point} for selection boundary. If the value is {@code null} then the
-     * {@link #getIndex()} will determine the selection boundary.
+     * Gets the x, y coordinates of the selection boundary in points (1/72"). These coordinates are
+     * represented by a {@link Point} . If the value is {@code null} then the {@link #getIndex()}
+     * will determine the selection boundary.
+     * <p><strong>Note:</strong> Point (0,0) represents the top-left corner of the page
      *
      * @return The point of the selection boundary.
      */
