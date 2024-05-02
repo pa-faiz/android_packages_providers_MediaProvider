@@ -37,6 +37,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
@@ -55,6 +56,7 @@ import com.android.photopicker.core.ApplicationOwned
 import com.android.photopicker.core.selection.Selection
 import com.android.photopicker.data.model.Media
 import com.android.photopicker.data.model.MediaPageKey
+import com.android.photopicker.data.paging.FakeInMemoryMediaPagingSource
 import com.android.photopicker.extensions.insertMonthSeparators
 import com.android.photopicker.extensions.toMediaGridItem
 import com.android.photopicker.test.utils.MockContentProviderWrapper
@@ -173,7 +175,8 @@ class MediaGridTest {
         }
 
         // Normally this would be created in the view model that owns the paged data.
-        pager = Pager(PagingConfig(pageSize = 50, maxSize = 500)) { FakeInMemoryPagingSource() }
+        pager =
+            Pager(PagingConfig(pageSize = 50, maxSize = 500)) { FakeInMemoryMediaPagingSource() }
 
         // Keep the flow processing out of the composable as that drastically cuts down on the
         // flakiness of individual test runs.
@@ -195,6 +198,7 @@ class MediaGridTest {
     private fun grid(
         selection: Selection<Media>,
         onItemClick: (Media) -> Unit,
+        onItemLongPress: (Media) -> Unit = {},
     ) {
 
         val items = flow.collectAsLazyPagingItems()
@@ -204,6 +208,7 @@ class MediaGridTest {
             items = items,
             selection = selected,
             onItemClick = onItemClick,
+            onItemLongPress = onItemLongPress,
             modifier = Modifier.testTag(MEDIA_GRID_TEST_TAG)
         )
     }
@@ -326,6 +331,42 @@ class MediaGridTest {
         }
     }
 
+    /** Ensures that items have the correct semantic information before and after selection */
+    @Test
+    fun testMediaGridLongPressItem() {
+
+        val resources = InstrumentationRegistry.getInstrumentation().getContext().getResources()
+        val mediaItemString = resources.getString(R.string.photopicker_media_item)
+
+        runTest {
+            val selection = Selection<Media>(scope = backgroundScope)
+
+            composeTestRule.setContent {
+                grid(
+                    /* selection= */ selection,
+                    /* onItemClick= */ {},
+                    /* onItemLongPress=*/ { item -> launch { selection.toggle(item) } }
+                )
+            }
+
+            composeTestRule
+                .onNode(hasTestTag(MEDIA_GRID_TEST_TAG))
+                .onChildren()
+                // Remove the separators
+                .filter(hasContentDescription(mediaItemString))
+                .onFirst()
+                .performTouchInput { longClick() }
+
+            advanceTimeBy(100)
+            composeTestRule.waitForIdle()
+
+            // Ensure the click handler correctly ran by checking the selection snapshot.
+            assertWithMessage("Expected long press handler to have executed.")
+                .that(selection.snapshot())
+                .isNotEmpty()
+        }
+    }
+
     /** Ensures that Separators are correctly inserted into the MediaGrid. */
     @Test
     fun testMediaGridSeparator() {
@@ -372,7 +413,8 @@ class MediaGridTest {
                     items = items,
                     selection = selected,
                     onItemClick = {},
-                    contentItemFactory = { item, _, onClick ->
+                    onItemLongPress = {},
+                    contentItemFactory = { item, _, onClick, _ ->
                         customContentItemFactory(item, onClick)
                     },
                 )

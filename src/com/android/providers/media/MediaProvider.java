@@ -800,8 +800,9 @@ public class MediaProvider extends ContentProvider {
                 case Intent.ACTION_PACKAGE_ADDED:
                     Uri uri = intent.getData();
                     String pkg = uri != null ? uri.getSchemeSpecificPart() : null;
+                    int uid = intent.getIntExtra(Intent.EXTRA_UID, 0);
                     if (pkg != null) {
-                        invalidateLocalCallingIdentityCache(pkg, "package " + intent.getAction());
+                        invalidateLocalCallingIdentityCache(uid, "package " + intent.getAction());
                         if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())) {
                             mUserCache.invalidateWorkProfileOwnerApps(pkg);
                             mPickerSyncController.notifyPackageRemoval(pkg);
@@ -895,14 +896,19 @@ public class MediaProvider extends ContentProvider {
     };
 
     private void invalidateLocalCallingIdentityCache(String packageName, String reason) {
+        try {
+            int packageUid = getContext().getPackageManager().getPackageUid(packageName, 0);
+            invalidateLocalCallingIdentityCache(packageUid, reason);
+        } catch (NameNotFoundException e) {
+            Log.d(TAG, "Couldn't get uid for package: " + packageName);
+        }
+    }
+
+    private void invalidateLocalCallingIdentityCache(int packageUid, String reason) {
         synchronized (mCachedCallingIdentityForFuse) {
-            try {
-                int packageUid = getContext().getPackageManager().getPackageUid(packageName, 0);
-                if (mCachedCallingIdentityForFuse.contains(packageUid)) {
-                    mCachedCallingIdentityForFuse.get(packageUid).dump(reason);
-                    mCachedCallingIdentityForFuse.remove(packageUid);
-                }
-            } catch (NameNotFoundException ignored) {
+            if (mCachedCallingIdentityForFuse.contains(packageUid)) {
+                mCachedCallingIdentityForFuse.get(packageUid).dump(reason);
+                mCachedCallingIdentityForFuse.remove(packageUid);
             }
         }
     }
@@ -2508,6 +2514,7 @@ public class MediaProvider extends ContentProvider {
             long[] redactionRanges = new long[0];
             if (isRedactionNeeded) {
                 redactionRanges = RedactionUtils.getRedactionRanges(fis, mimeType);
+                Log.v(TAG, "Redaction ranges: " + Arrays.toString(redactionRanges));
             }
             return new FileOpenResult(0 /* status */, uid, /* transformsUid */ 0,
                     /* nativeFd */ pfd.detachFd(), redactionRanges);
@@ -3758,7 +3765,7 @@ public class MediaProvider extends ContentProvider {
         } else if (table == PICKER_INTERNAL_ALBUMS_LOCAL) {
             return mPickerDataLayer.fetchLocalAlbums(queryArgs);
         } else if (table == PICKER_INTERNAL_V2) {
-            return PickerUriResolverV2.query(uri, queryArgs);
+            return PickerUriResolverV2.query(getContext().getApplicationContext(), uri, queryArgs);
         }
 
         final DatabaseHelper helper = getDatabaseForUri(uri);
@@ -4496,7 +4503,6 @@ public class MediaProvider extends ContentProvider {
 
             FileUtils.sanitizeValues(values, /*rewriteHiddenFileName*/ !isFuseThread());
             FileUtils.computeDataFromValues(values, volumePath, isFuseThread());
-            assertFileColumnsConsistent(match, uri, values);
 
             // Create result file
             File res = new File(values.getAsString(MediaColumns.DATA));
@@ -6493,6 +6499,15 @@ public class MediaProvider extends ContentProvider {
             final int[] countPerMediaType = new int[FileColumns.MEDIA_TYPE_COUNT];
             if (isFilesTable) {
                 String deleteparam = uri.getQueryParameter(MediaStore.PARAM_DELETE_DATA);
+
+                // if calling package is not self and its target SDK version is greater than U,
+                // ignore the deleteparam and do not allow use by apps
+                if (!isCallingPackageSelf() && getCallingPackageTargetSdkVersion()
+                        > Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    deleteparam = null;
+                    Log.w(TAG, "Ignoring param:deletedata post U for external apps");
+                }
+
                 if (deleteparam == null || ! deleteparam.equals("false")) {
                     Cursor c = qb.query(helper, projection, userWhere, userWhereArgs,
                             null, null, null, null, null);
@@ -6886,6 +6901,8 @@ public class MediaProvider extends ContentProvider {
 
     @Nullable
     private Bundle getResultForSetStableUrisFlag(String volumeName, Bundle extras) {
+        // WRITE_MEDIA_STORAGE is a privileged permission which only MediaProvider and some other
+        // system apps have.
         getContext().enforceCallingPermission(Manifest.permission.WRITE_MEDIA_STORAGE,
                 "Permission missing to call SET_STABLE_URIS by uid:" + Binder.getCallingUid());
         final LocalCallingIdentity token = clearLocalCallingIdentity();

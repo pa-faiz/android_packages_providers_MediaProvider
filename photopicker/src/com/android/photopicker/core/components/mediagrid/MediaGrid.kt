@@ -22,7 +22,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,8 +49,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
@@ -69,7 +73,7 @@ private val CELLS_PER_ROW_EXPANDED = 4
 private val MEASUREMENT_DEFAULT_CONTENT_PADDING = 0.dp
 
 /** The amount of padding to use around each cell in the grid. */
-private val MEASUREMENT_CELL_PADDING = 1.dp
+private val MEASUREMENT_CELL_SPACING = 1.dp
 
 /** The size of the "push in" when an item in the grid is selected */
 private val MEASUREMENT_SELECTED_INTERNAL_PADDING = 12.dp
@@ -78,7 +82,7 @@ private val MEASUREMENT_SELECTED_INTERNAL_PADDING = 12.dp
 private val MEASUREMENT_NOT_SELECTED_INTERNAL_PADDING = 0.dp
 
 /** The offset to apply to the selected icon to shift it over the corner of the image */
-private val MEASUREMENT_SELECTED_ICON_OFFSET = 8.dp
+private val MEASUREMENT_SELECTED_ICON_OFFSET = 4.dp
 
 /** Border width for the selected icon */
 private val MEASUREMENT_SELECTED_ICON_BORDER = 2.dp
@@ -118,6 +122,7 @@ fun mediaGrid(
     items: LazyPagingItems<MediaGridItem>,
     selection: Set<Media>,
     onItemClick: (item: Media) -> Unit,
+    onItemLongPress: (item: Media) -> Unit = {},
     isExpandedScreen: Boolean = false,
     columns: GridCells =
         if (isExpandedScreen) GridCells.Fixed(CELLS_PER_ROW_EXPANDED)
@@ -134,9 +139,11 @@ fun mediaGrid(
             item: MediaGridItem.MediaItem,
             isSelected: Boolean,
             onClick: ((item: Media) -> Unit)?,
+            onLongPress: ((item: Media) -> Unit)?,
         ) -> Unit =
-        { item, isSelected, onClick ->
-            defaultBuildItem(item.media, isSelected, onClick)
+        { item, isSelected, onClick, onLongPress,
+            ->
+            defaultBuildItem(item.media, isSelected, onClick, onLongPress)
         },
     contentSeparatorFactory: @Composable (item: MediaGridItem.SeparatorItem) -> Unit = { item ->
         defaultBuildSeparator(item)
@@ -149,6 +156,8 @@ fun mediaGrid(
         state = state,
         contentPadding = contentPadding,
         userScrollEnabled = userScrollEnabled,
+        horizontalArrangement = Arrangement.spacedBy(MEASUREMENT_CELL_SPACING),
+        verticalArrangement = Arrangement.spacedBy(MEASUREMENT_CELL_SPACING),
     ) {
         items(
             count = items.itemCount,
@@ -160,7 +169,12 @@ fun mediaGrid(
             item?.let {
                 when (item) {
                     is MediaGridItem.MediaItem ->
-                        contentItemFactory(item, selection.contains(item.media), onItemClick)
+                        contentItemFactory(
+                            item,
+                            selection.contains(item.media),
+                            onItemClick,
+                            onItemLongPress,
+                        )
                     is MediaGridItem.SeparatorItem -> contentSeparatorFactory(item)
                 }
             }
@@ -176,8 +190,7 @@ fun mediaGrid(
 private fun keyFactory(item: MediaGridItem?, index: Int): String {
     return when (item) {
         is MediaGridItem.MediaItem -> "${item.media.pickerId}"
-        // TODO(b/323830434): Ensure uniqueness of labels
-        is MediaGridItem.SeparatorItem -> "${item.label}"
+        is MediaGridItem.SeparatorItem -> "${item.label}_$index"
         null -> "$index"
     }
 }
@@ -218,6 +231,7 @@ private fun defaultBuildItem(
     item: Media,
     isSelected: Boolean,
     onClick: ((item: Media) -> Unit)?,
+    onLongPress: ((item: Media) -> Unit)?,
 ) {
 
     // Padding is animated based on the selected state of the item. When the item is selected,
@@ -239,14 +253,36 @@ private fun defaultBuildItem(
 
     // Wrap the entire Grid cell in a box for handling aspectRatio and clicks.
     Box(
-        Modifier.aspectRatio(1f).fillMaxSize().padding(MEASUREMENT_CELL_PADDING).clickable {
-            onClick?.invoke(item)
-        }
+        // Apply semantics for the click handlers
+        Modifier.semantics(mergeDescendants = true) {
+                onClick(
+                    action = {
+                        onClick?.invoke(item)
+                        /* eventHandled= */ true
+                    }
+                )
+                onLongClick(
+                    action = {
+                        onLongPress?.invoke(item)
+                        /* eventHandled= */ true
+                    }
+                )
+            }
+            .aspectRatio(1f)
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick?.invoke(item) },
+                    onLongPress = { onLongPress?.invoke(item) }
+                )
+            }
     ) {
 
         // A background surface that is shown behind selected images.
-        // TODO(b/323830032): Use a proper material theme color here.
-        Surface(modifier = Modifier.fillMaxSize(), color = Color.LightGray) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest
+        ) {
 
             // Container for the image and selected icon
             Box {
@@ -289,20 +325,17 @@ private fun defaultBuildItem(
                             modifier =
                                 Modifier
                                     // Background is necessary because the icon has negative space.
-                                    // TODO(b/323830032): Use a proper material theme color here.
-                                    .background(Color.White, CircleShape)
+                                    .background(MaterialTheme.colorScheme.onPrimary, CircleShape)
                                     // Border color should match the surface that is behind the
                                     // image.
-                                    // TODO(b/323830032): Use a proper material theme color here.
                                     .border(
                                         MEASUREMENT_SELECTED_ICON_BORDER,
-                                        Color.LightGray,
+                                        MaterialTheme.colorScheme.surfaceVariant,
                                         CircleShape
                                     ),
                             contentDescription = stringResource(R.string.photopicker_item_selected),
-                            // TODO(b/323830032): Use a proper material theme color selected here.
                             // For now, this is a lovely shade of dark green to match the mocks.
-                            tint = Color(0xFF006400),
+                            tint = MaterialTheme.colorScheme.primary,
                         )
                     }
                 } // Icon Container
