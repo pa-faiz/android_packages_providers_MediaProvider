@@ -69,7 +69,7 @@ public interface ConfigStore {
     boolean DEFAULT_CLOUD_MEDIA_IN_PHOTO_PICKER_ENABLED = true;
     boolean DEFAULT_ENFORCE_CLOUD_PROVIDER_ALLOWLIST = true;
     boolean DEFAULT_PICKER_CHOICE_MANAGED_SELECTION_ENABLED = true;
-    boolean DEFAULT_PICKER_PRIVATE_SPACE_ENABLED = false;
+    boolean DEFAULT_PICKER_PRIVATE_SPACE_ENABLED = true;
 
     /**
      * @return if the Cloud-Media-in-Photo-Picker enabled (e.g. platform will recognize and
@@ -256,6 +256,28 @@ public interface ConfigStore {
         writer.println("  transcodeMaxDurationMs=" + getTranscodeMaxDurationMs());
         writer.println("  transcodeCompatManifest=" + getTranscodeCompatManifest());
         writer.println("  transcodeCompatStale=" + getTranscodeCompatStale());
+    }
+
+    static ConfigStore getDefaultConfigStore() {
+        return new ConfigStore() {
+            @NonNull
+            @Override
+            public List<String> getTranscodeCompatManifest() {
+                return Collections.emptyList();
+            }
+
+            @NonNull
+            @Override
+            public List<String> getTranscodeCompatStale() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public void addOnChangeListener(@NonNull Executor executor,
+                    @NonNull Runnable listener) {
+                // Do nothing
+            }
+        };
     }
 
     /**

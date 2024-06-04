@@ -55,6 +55,7 @@ import com.android.providers.media.photopicker.sync.CloseableReentrantLock;
 import com.android.providers.media.photopicker.sync.PickerSyncLockManager;
 import com.android.providers.media.photopicker.sync.SyncTrackerRegistry;
 import com.android.providers.media.photopicker.util.exceptions.UnableToAcquireLockException;
+import com.android.providers.media.photopicker.v2.PickerNotificationSender;
 import com.android.providers.media.util.MimeUtils;
 
 import java.io.PrintWriter;
@@ -118,9 +119,7 @@ public class PickerDbFacade {
     public static final String KEY_DURATION_MS = "duration_ms";
     public static final String KEY_MIME_TYPE = "mime_type";
     public static final String KEY_STANDARD_MIME_TYPE_EXTENSION = "standard_mime_type_extension";
-    @VisibleForTesting
     public static final String KEY_IS_FAVORITE = "is_favorite";
-    @VisibleForTesting
     public static final String KEY_ALBUM_ID = "album_id";
     @VisibleForTesting
     public static final String KEY_HEIGHT = "height";
@@ -227,6 +226,7 @@ public class PickerDbFacade {
         try (CloseableReentrantLock ignored = mPickerSyncLockManager
                 .lock(PickerSyncLockManager.DB_CLOUD_LOCK)) {
             mCloudProvider = authority;
+            PickerNotificationSender.notifyMediaChange(mContext);
         }
     }
 
@@ -240,6 +240,7 @@ public class PickerDbFacade {
         try (CloseableReentrantLock ignored =
                      mPickerSyncLockManager.tryLock(PickerSyncLockManager.DB_CLOUD_LOCK)) {
             mCloudProvider = authority;
+            PickerNotificationSender.notifyMediaChange(mContext);
         }
     }
 

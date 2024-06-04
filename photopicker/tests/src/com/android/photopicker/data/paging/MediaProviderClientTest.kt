@@ -30,8 +30,7 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
-import src.com.android.photopicker.data.TestMediaProvider
-
+import com.android.photopicker.data.TestMediaProvider
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
@@ -101,6 +100,7 @@ class MediaProviderClientTest {
             resolver = testContentResolver
         )
 
+        assertThat(testContentProvider.lastRefreshMediaRequest).isNotNull()
         assertThat(testContentProvider.lastRefreshMediaRequest?.getBoolean("is_local_only", true))
             .isFalse()
     }
@@ -127,8 +127,44 @@ class MediaProviderClientTest {
             resolver = testContentResolver
         )
 
+        assertThat(testContentProvider.lastRefreshMediaRequest).isNotNull()
         assertThat(testContentProvider.lastRefreshMediaRequest?.getBoolean("is_local_only", false))
             .isTrue()
+    }
+
+    @Test
+    fun testRefreshAlbumMedia() = runTest {
+        testContentProvider.lastRefreshMediaRequest = null
+        val mediaProviderClient = MediaProviderClient()
+        val albumId = "album_id"
+        val albumAuthority = "album_authority"
+        val providers: List<Provider> = mutableListOf(
+                Provider(
+                        authority = "local_authority",
+                        mediaSource = MediaSource.LOCAL,
+                        uid = 0
+                ),
+                Provider(
+                        authority = "hypothetical_local_authority",
+                        mediaSource = MediaSource.LOCAL,
+                        uid = 1
+                ),
+        )
+
+        mediaProviderClient.refreshAlbumMedia(
+                albumId = albumId,
+                albumAuthority = albumAuthority,
+                providers = providers,
+                resolver = testContentResolver
+        )
+
+        assertThat(testContentProvider.lastRefreshMediaRequest).isNotNull()
+        assertThat(testContentProvider.lastRefreshMediaRequest?.getBoolean("is_local_only", false))
+                .isTrue()
+        assertThat(testContentProvider.lastRefreshMediaRequest?.getString("album_id"))
+                .isEqualTo(albumId)
+        assertThat(testContentProvider.lastRefreshMediaRequest?.getString("album_authority"))
+                .isEqualTo(albumAuthority)
     }
 
     @Test
@@ -136,12 +172,12 @@ class MediaProviderClientTest {
         val mediaProviderClient = MediaProviderClient()
 
         val albumLoadResult: LoadResult<MediaPageKey, Group.Album> =
-                mediaProviderClient.fetchAlbums(
-                        pageKey = MediaPageKey(),
-                        pageSize = 5,
-                        contentResolver = testContentResolver,
-                        availableProviders = listOf(Provider("provider", MediaSource.LOCAL, 0))
-                )
+            mediaProviderClient.fetchAlbums(
+                pageKey = MediaPageKey(),
+                pageSize = 5,
+                contentResolver = testContentResolver,
+                availableProviders = listOf(Provider("provider", MediaSource.LOCAL, 0))
+            )
 
         assertThat(albumLoadResult is LoadResult.Page).isTrue()
 
@@ -150,6 +186,34 @@ class MediaProviderClientTest {
         assertThat(albums.count()).isEqualTo(testContentProvider.albums.count())
         for (index in albums.indices) {
             assertThat(albums[index]).isEqualTo(testContentProvider.albums[index])
+        }
+    }
+
+    @Test
+    fun testFetchAlbumMediaPage() = runTest {
+        val mediaProviderClient = MediaProviderClient()
+        val albumId = testContentProvider.albumMedia.keys.elementAt(0)
+        val albumAuthority = "authority"
+
+        val mediaLoadResult: LoadResult<MediaPageKey, Media> =
+            mediaProviderClient.fetchAlbumMedia(
+                albumId = albumId,
+                albumAuthority = albumAuthority,
+                pageKey = MediaPageKey(),
+                pageSize = 5,
+                contentResolver = testContentResolver,
+                availableProviders = listOf(Provider(albumAuthority, MediaSource.LOCAL, 0))
+            )
+
+        assertThat(mediaLoadResult is LoadResult.Page).isTrue()
+
+        val albumMedia: List<Media> = (mediaLoadResult as LoadResult.Page).data
+
+        val expectedAlbumMedia = testContentProvider.albumMedia.get(albumId)
+                ?: emptyList()
+        assertThat(albumMedia.count()).isEqualTo(expectedAlbumMedia.count())
+        for (index in albumMedia.indices) {
+            assertThat(albumMedia[index]).isEqualTo(expectedAlbumMedia[index])
         }
     }
 }
