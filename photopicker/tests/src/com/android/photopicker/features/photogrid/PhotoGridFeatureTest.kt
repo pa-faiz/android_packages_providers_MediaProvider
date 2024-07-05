@@ -33,6 +33,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.waitUntilAtLeastOneExists
 import com.android.photopicker.R
 import com.android.photopicker.core.ActivityModule
@@ -40,6 +42,7 @@ import com.android.photopicker.core.ApplicationModule
 import com.android.photopicker.core.ApplicationOwned
 import com.android.photopicker.core.Background
 import com.android.photopicker.core.ConcurrencyModule
+import com.android.photopicker.core.EmbeddedServiceModule
 import com.android.photopicker.core.Main
 import com.android.photopicker.core.ViewModelModule
 import com.android.photopicker.core.configuration.PhotopickerConfiguration
@@ -82,12 +85,12 @@ import org.mockito.MockitoAnnotations
     ActivityModule::class,
     ApplicationModule::class,
     ConcurrencyModule::class,
+    EmbeddedServiceModule::class,
     ViewModelModule::class,
 )
 @HiltAndroidTest
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalTestApi::class)
 class PhotoGridFeatureTest : PhotopickerFeatureBaseTest() {
-
 
     /* Hilt's rule needs to come first to ensure the DI container is setup for the test. */
     @get:Rule(order = 0) val hiltRule = HiltAndroidRule(this)
@@ -259,6 +262,36 @@ class PhotoGridFeatureTest : PhotopickerFeatureBaseTest() {
                 .onFirst()
                 .assert(hasClickAction())
                 .assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun testSwipeLeftToNavigateToAlbumGrid() {
+        val resources = getTestableContext().getResources()
+        val mediaItemString = resources.getString(R.string.photopicker_media_item)
+
+        mainScope.runTest {
+            composeTestRule.setContent {
+                callPhotopickerMain(
+                    featureManager = featureManager,
+                    selection = selection,
+                    events = events,
+                )
+            }
+
+            // Wait for the PhotoGridViewModel to load data and for the UI to update.
+            advanceTimeBy(100)
+            composeTestRule.waitForIdle()
+
+            composeTestRule
+                .onAllNodesWithContentDescription(mediaItemString)
+                .onFirst()
+                .performTouchInput { swipeLeft() }
+            composeTestRule.waitForIdle()
+            val route = navController.currentBackStackEntry?.destination?.route
+            assertWithMessage("Expected swipe to navigate to AlbumGrid")
+                .that(route)
+                .isEqualTo(PhotopickerDestinations.ALBUM_GRID.route)
         }
     }
 }

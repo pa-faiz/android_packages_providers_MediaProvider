@@ -53,7 +53,7 @@ import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.android.photopicker.R
 import com.android.photopicker.core.configuration.provideTestConfigurationFlow
-import com.android.photopicker.core.selection.Selection
+import com.android.photopicker.core.selection.SelectionImpl
 import com.android.photopicker.core.user.UserMonitor
 import com.android.photopicker.data.model.Media
 import com.android.photopicker.data.model.MediaSource
@@ -76,8 +76,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
-import org.mockito.ArgumentMatchers.any
-import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Captor
 import org.mockito.Mock
 import org.mockito.Mockito.any
@@ -220,7 +218,11 @@ class PreviewViewModelTest {
     fun testToggleInSelectionUpdatesSelection() {
 
         runTest {
-            val selection = Selection<Media>(scope = this.backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                )
 
             val viewModel =
                 PreviewViewModel(
@@ -240,7 +242,7 @@ class PreviewViewModelTest {
                 .isEqualTo(0)
 
             // Toggle the item into the selection
-            viewModel.toggleInSelection(TEST_MEDIA_IMAGE)
+            viewModel.toggleInSelection(TEST_MEDIA_IMAGE, {})
 
             // Wait for selection update.
             advanceTimeBy(100)
@@ -250,7 +252,7 @@ class PreviewViewModelTest {
                 .contains(TEST_MEDIA_IMAGE)
 
             // Toggle the item out of the selection
-            viewModel.toggleInSelection(TEST_MEDIA_IMAGE)
+            viewModel.toggleInSelection(TEST_MEDIA_IMAGE, {})
 
             advanceTimeBy(100)
 
@@ -265,7 +267,12 @@ class PreviewViewModelTest {
     fun testSnapshotSelection() {
 
         runTest {
-            val selection = Selection<Media>(scope = this.backgroundScope, setOf(TEST_MEDIA_IMAGE))
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                    initialSelection = setOf(TEST_MEDIA_IMAGE),
+                )
 
             val viewModel =
                 PreviewViewModel(
@@ -304,7 +311,12 @@ class PreviewViewModelTest {
     fun testRemotePreviewControllerCreation() {
 
         runTest {
-            val selection = Selection<Media>(scope = this.backgroundScope, setOf(TEST_MEDIA_IMAGE))
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                    initialSelection = setOf(TEST_MEDIA_IMAGE),
+                )
             val viewModel =
                 PreviewViewModel(
                     this.backgroundScope,
@@ -353,7 +365,12 @@ class PreviewViewModelTest {
     fun testRemotePreviewControllersAreCached() {
 
         runTest {
-            val selection = Selection<Media>(scope = this.backgroundScope, setOf(TEST_MEDIA_IMAGE))
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                    initialSelection = setOf(TEST_MEDIA_IMAGE),
+                )
             val viewModel =
                 PreviewViewModel(
                     this.backgroundScope,
@@ -439,7 +456,12 @@ class PreviewViewModelTest {
             ) {
                 bundleOf(EXTRA_SURFACE_CONTROLLER to controllerProxy)
             }
-            val selection = Selection<Media>(scope = this.backgroundScope, setOf(TEST_MEDIA_IMAGE))
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                    initialSelection = setOf(TEST_MEDIA_IMAGE),
+                )
             val viewModel =
                 PreviewViewModel(
                     this.backgroundScope,
@@ -465,7 +487,12 @@ class PreviewViewModelTest {
     fun testRemotePreviewSurfaceStateChangedCallbackEmitsUpdates() {
 
         runTest {
-            val selection = Selection<Media>(scope = this.backgroundScope, setOf(TEST_MEDIA_IMAGE))
+            val selection =
+                SelectionImpl<Media>(
+                    scope = this.backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = this.backgroundScope),
+                    initialSelection = setOf(TEST_MEDIA_IMAGE),
+                )
             val viewModel =
                 PreviewViewModel(
                     this.backgroundScope,

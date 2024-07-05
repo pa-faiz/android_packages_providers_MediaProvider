@@ -16,7 +16,6 @@
 
 package com.android.photopicker.features.preview
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -36,6 +34,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,9 +51,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.photopicker.R
+import com.android.photopicker.core.configuration.LocalPhotopickerConfiguration
 import com.android.photopicker.core.events.Event
 import com.android.photopicker.core.events.LocalEvents
 import com.android.photopicker.core.features.FeatureToken.PREVIEW
@@ -61,7 +61,9 @@ import com.android.photopicker.core.glide.RESOLUTION_REQUESTED
 import com.android.photopicker.core.glide.Resolution
 import com.android.photopicker.core.glide.loadMedia
 import com.android.photopicker.core.navigation.LocalNavController
+import com.android.photopicker.core.obtainViewModel
 import com.android.photopicker.core.selection.LocalSelection
+import com.android.photopicker.core.theme.CustomAccentColorScheme
 import com.android.photopicker.data.model.Media
 import com.android.photopicker.extensions.navigateToPreviewSelection
 import kotlinx.coroutines.flow.StateFlow
@@ -73,6 +75,9 @@ private val MEASUREMENT_SELECTION_BUTTON_MIN_WIDTH = 150.dp
 /* The amount of padding around the selection bar at the bottom of the layout. */
 private val MEASUREMENT_SELECTION_BAR_PADDING = 12.dp
 
+/** Padding between the bottom edge of the screen and the snackbars */
+private val MEASUREMENT_SNACKBAR_BOTTOM_PADDING = 48.dp
+
 /**
  * Entry point for the [PhotopickerDestinations.PREVIEW_SELECTION] route.
  *
@@ -80,8 +85,7 @@ private val MEASUREMENT_SELECTION_BAR_PADDING = 12.dp
  * from the list of preview-able photos.
  */
 @Composable
-fun PreviewSelection(viewModel: PreviewViewModel = hiltViewModel()) {
-
+fun PreviewSelection(viewModel: PreviewViewModel = obtainViewModel()) {
     val selection by viewModel.selectionSnapshot.collectAsStateWithLifecycle()
 
     // Only snapshot the selection once when the composable is created.
@@ -120,6 +124,10 @@ fun PreviewMedia(
     // delegate.
     val localMedia = media
 
+    /** SnackbarHost api for launching Snackbars */
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     Box {
         Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
             Box(
@@ -130,34 +138,60 @@ fun PreviewMedia(
                 var audioIsMuted by remember { mutableStateOf(true) }
                 when (localMedia) {
                     is Media.Image -> ImageUi(localMedia)
-                    is Media.Video -> VideoUi(localMedia, audioIsMuted, { audioIsMuted = it })
+                    is Media.Video ->
+                        VideoUi(localMedia, audioIsMuted, { audioIsMuted = it }, snackbarHostState)
                     null -> {}
                 }
             }
         }
 
-        // Once a media item is loaded, display the selection toggles at the bottom.
-        if (localMedia != null) {
-            val viewModel: PreviewViewModel = hiltViewModel()
-            Row(
-                modifier =
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .align(Alignment.BottomCenter)
                     // This is inside an edge-to-edge dialog, so apply padding to ensure the
                     // selection button stays above the navigation bar.
-                    Modifier.windowInsetsPadding(
-                            WindowInsets.systemBars.only(WindowInsetsSides.Vertical)
+                    .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Vertical)),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+
+            // Photopicker is (generally) inside of a BottomSheet, and the preview route is inside a
+            // dialog, so this requires a custom [SnackbarHost] to draw on top of those elements
+            // that do not play nicely with snackbars. Peace was never an option.
+            SnackbarHost(snackbarHostState)
+
+            // Once a media item is loaded, display the selection toggles at the bottom.
+            if (localMedia != null) {
+                val viewModel: PreviewViewModel = obtainViewModel()
+                Row {
+                    val selectionLimit = LocalPhotopickerConfiguration.current.selectionLimit
+                    val selectionLimitExceededMessage =
+                        stringResource(
+                            R.string.photopicker_selection_limit_exceeded_snackbar,
+                            selectionLimit
                         )
-                        .align(Alignment.BottomCenter)
-                        .padding(MEASUREMENT_SELECTION_BAR_PADDING)
-            ) {
-                FilledTonalButton(
-                    modifier = Modifier.widthIn(min = MEASUREMENT_SELECTION_BUTTON_MIN_WIDTH),
-                    onClick = { viewModel.toggleInSelection(localMedia) },
-                ) {
-                    Text(
-                        if (selection.contains(localMedia))
-                            stringResource(R.string.photopicker_deselect_button_label)
-                        else stringResource(R.string.photopicker_select_button_label)
-                    )
+
+                    FilledTonalButton(
+                        modifier = Modifier.widthIn(min = MEASUREMENT_SELECTION_BUTTON_MIN_WIDTH),
+                        onClick = {
+                            viewModel.toggleInSelection(
+                                media = localMedia,
+                                onSelectionLimitExceeded = {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            selectionLimitExceededMessage
+                                        )
+                                    }
+                                }
+                            )
+                        },
+                    ) {
+                        Text(
+                            if (selection.contains(localMedia))
+                                stringResource(R.string.photopicker_deselect_button_label)
+                            else stringResource(R.string.photopicker_select_button_label)
+                        )
+                    }
                 }
             }
         }
@@ -171,14 +205,16 @@ fun PreviewMedia(
  */
 @Composable
 private fun Preview(selection: Set<Media>) {
-
-    val viewModel: PreviewViewModel = hiltViewModel()
+    val viewModel: PreviewViewModel = obtainViewModel()
     val currentSelection by LocalSelection.current.flow.collectAsStateWithLifecycle()
     val events = LocalEvents.current
     val scope = rememberCoroutineScope()
 
     // Preview session state to keep track if the video player's audio is muted.
     var audioIsMuted by remember { mutableStateOf(true) }
+
+    /** SnackbarHost api for launching Snackbars */
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Page count equal to size of selection
     val state = rememberPagerState { selection.size }
@@ -191,9 +227,20 @@ private fun Preview(selection: Set<Media>) {
 
             when (media) {
                 is Media.Image -> ImageUi(media)
-                is Media.Video -> VideoUi(media, audioIsMuted, { audioIsMuted = it })
+                is Media.Video ->
+                    VideoUi(media, audioIsMuted, { audioIsMuted = it }, snackbarHostState)
             }
         }
+
+        // Photopicker is (generally) inside of a BottomSheet, and the preview route is inside a
+        // dialog, so this requires a custom [SnackbarHost] to draw on top of those elements that do
+        // not play nicely with snackbars. Peace was never an option.
+        SnackbarHost(
+            snackbarHostState,
+            modifier =
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = MEASUREMENT_SNACKBAR_BOTTOM_PADDING)
+        )
 
         // Bottom row of action buttons
         Row(
@@ -203,20 +250,39 @@ private fun Preview(selection: Set<Media>) {
                     .padding(MEASUREMENT_SELECTION_BAR_PADDING),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            val selectionLimit = LocalPhotopickerConfiguration.current.selectionLimit
+            val selectionLimitExceededMessage =
+                stringResource(
+                    R.string.photopicker_selection_limit_exceeded_snackbar,
+                    selectionLimit
+                )
             FilledTonalButton(
                 modifier =
                     Modifier.widthIn(
                         // Apply a min width to prevent the button re-sizing when the label changes.
                         min = MEASUREMENT_SELECTION_BUTTON_MIN_WIDTH,
                     ),
-                onClick = { viewModel.toggleInSelection(selection.elementAt(state.currentPage)) },
+                onClick = {
+                    viewModel.toggleInSelection(
+                        media = selection.elementAt(state.currentPage),
+                        onSelectionLimitExceeded = {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(selectionLimitExceededMessage)
+                            }
+                        }
+                    )
+                },
             ) {
                 Text(
                     if (currentSelection.contains(selection.elementAt(state.currentPage)))
                     // Label: Deselect
                     stringResource(R.string.photopicker_deselect_button_label)
                     // Label: Select
-                    else stringResource(R.string.photopicker_select_button_label)
+                    else stringResource(R.string.photopicker_select_button_label),
+                    color =
+                        CustomAccentColorScheme.current.getAccentColorIfDefinedOrElse(
+                            MaterialTheme.colorScheme.primary
+                        ),
                 )
             }
 
@@ -228,8 +294,15 @@ private fun Preview(selection: Set<Media>) {
                 },
                 colors =
                     ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        containerColor =
+                            CustomAccentColorScheme.current.getAccentColorIfDefinedOrElse(
+                                /* fallback */ MaterialTheme.colorScheme.primary
+                            ),
+                        contentColor =
+                            CustomAccentColorScheme.current
+                                .getTextColorForAccentComponentsIfDefinedOrElse(
+                                    /* fallback */ MaterialTheme.colorScheme.onPrimary
+                                ),
                     )
             ) {
                 Text(
@@ -251,7 +324,6 @@ private fun Preview(selection: Set<Media>) {
  */
 @Composable
 private fun ImageUi(image: Media.Image) {
-
     loadMedia(
         media = image,
         resolution = Resolution.FULL,
@@ -269,13 +341,18 @@ private fun ImageUi(image: Media.Image) {
  */
 @Composable
 fun PreviewSelectionButton(modifier: Modifier) {
-
     val navController = LocalNavController.current
 
     TextButton(
         onClick = navController::navigateToPreviewSelection,
         modifier = modifier,
     ) {
-        Text(stringResource(R.string.photopicker_preview_button_label))
+        Text(
+            stringResource(R.string.photopicker_preview_button_label),
+            color =
+                CustomAccentColorScheme.current.getAccentColorIfDefinedOrElse(
+                    /* fallback */ MaterialTheme.colorScheme.primary
+                )
+        )
     }
 }

@@ -1096,6 +1096,8 @@ public class PickerSyncController {
             }
 
             sendPickerUiRefreshNotification(/* isInitPending */ true);
+
+            PickerNotificationSender.notifyAvailableProvidersChange(mContext);
         }
     }
 
@@ -1257,7 +1259,7 @@ public class PickerSyncController {
         try {
             Bundle result = mContext.getContentResolver().call(getMediaCollectionInfoUri(authority),
                     CloudMediaProviderContract.METHOD_GET_MEDIA_COLLECTION_INFO, /* arg */ null,
-                    /* extras */ null);
+                    /* extras */ new Bundle());
             return (result == null) ? (new Bundle()) : result;
         } finally {
             NonUiEventLogger.logPickerGetMediaCollectionInfoEnd(instanceId, MY_UID, authority);
@@ -1542,6 +1544,8 @@ public class PickerSyncController {
                 // Only send a media update notification if the media table is getting updated.
                 if (albumId == null) {
                     PickerNotificationSender.notifyMediaChange(mContext);
+                } else {
+                    PickerNotificationSender.notifyAlbumMediaChange(mContext, authority, albumId);
                 }
             } while (nextPageToken != null);
 
@@ -1836,25 +1840,27 @@ public class PickerSyncController {
      * 1. Current cloud provider is not null.
      * 2. Current cloud provider is present in the given providers list.
      * 3. Database has currently enabled cloud provider queries.
+     * 4. The given provider is equal to the current provider.
      */
-    public boolean shouldQueryCloudMedia(List<String> providers) {
-        return shouldQueryCloudMedia(providers, getCloudProviderOrDefault(/* defaultValue */ null));
+    public boolean shouldQueryCloudMedia(
+            @NonNull List<String> providers,
+            @Nullable String cloudProvider) {
+        return cloudProvider != null
+                && providers.contains(cloudProvider)
+                && shouldQueryCloudMedia(cloudProvider);
     }
 
     /**
      * Returns true when all the following conditions are true:
      * 1. Current cloud provider is not null.
-     * 2. Current cloud provider is present in the given providers list.
-     * 3. Database has currently enabled cloud provider queries.
+     * 2. Database has currently enabled cloud provider queries.
      */
     public boolean shouldQueryCloudMedia(
-            @NonNull List<String> providers,
             @Nullable String cloudProvider) {
         try (CloseableReentrantLock ignored =
-                    mPickerSyncLockManager.tryLock(PickerSyncLockManager.CLOUD_PROVIDER_LOCK)) {
+                     mPickerSyncLockManager.tryLock(PickerSyncLockManager.CLOUD_PROVIDER_LOCK)) {
             return cloudProvider != null
                     && cloudProvider.equals(getCloudProviderWithTimeout())
-                    && providers.contains(cloudProvider)
                     && cloudProvider.equals(mDbFacade.getCloudProvider());
         } catch (UnableToAcquireLockException e) {
             Log.e(TAG, "Could not check if cloud media should be queried", e);

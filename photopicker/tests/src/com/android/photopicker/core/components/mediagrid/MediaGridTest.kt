@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -51,7 +52,12 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.android.photopicker.R
 import com.android.photopicker.core.ApplicationModule
 import com.android.photopicker.core.ApplicationOwned
-import com.android.photopicker.core.selection.Selection
+import com.android.photopicker.core.configuration.LocalPhotopickerConfiguration
+import com.android.photopicker.core.configuration.PhotopickerConfiguration
+import com.android.photopicker.core.configuration.provideTestConfigurationFlow
+import com.android.photopicker.core.configuration.testPhotopickerConfiguration
+import com.android.photopicker.core.selection.SelectionImpl
+import com.android.photopicker.core.theme.PhotopickerTheme
 import com.android.photopicker.data.model.Group
 import com.android.photopicker.data.model.Media
 import com.android.photopicker.data.model.MediaPageKey
@@ -59,8 +65,8 @@ import com.android.photopicker.data.model.MediaSource
 import com.android.photopicker.data.paging.FakeInMemoryAlbumPagingSource
 import com.android.photopicker.data.paging.FakeInMemoryMediaPagingSource
 import com.android.photopicker.extensions.insertMonthSeparators
-import com.android.photopicker.extensions.toMediaGridItemFromMedia
 import com.android.photopicker.extensions.toMediaGridItemFromAlbum
+import com.android.photopicker.extensions.toMediaGridItemFromMedia
 import com.android.photopicker.test.utils.MockContentProviderWrapper
 import com.android.photopicker.tests.utils.mockito.whenever
 import com.bumptech.glide.Glide
@@ -133,35 +139,37 @@ class MediaGridTest {
                 add(
                     MediaGridItem.MediaItem(
                         media =
-                            Media.Image(
-                                mediaId = "$i",
-                                pickerId = i.toLong(),
-                                authority = "a",
-                                mediaSource = MediaSource.LOCAL,
-                                mediaUri = Uri.EMPTY.buildUpon()
-                                    .apply {
-                                        scheme("content")
-                                        authority("media")
-                                        path("picker")
-                                        path("a")
-                                        path("$i")
-                                    }
-                                    .build(),
-                                glideLoadableUri = Uri.EMPTY.buildUpon()
-                                    .apply {
-                                        scheme("content")
-                                        authority("a")
-                                        path("$i")
-                                    }
-                                    .build(),
-                                dateTakenMillisLong =
-                                    LocalDateTime.now()
-                                        .minus(i.toLong(), ChronoUnit.DAYS)
-                                        .toEpochSecond(ZoneOffset.UTC) * 1000,
-                                sizeInBytes = 1000L,
-                                mimeType = "image/png",
-                                standardMimeTypeExtension = 1,
-                            )
+                        Media.Image(
+                            mediaId = "$i",
+                            pickerId = i.toLong(),
+                            authority = "a",
+                            mediaSource = MediaSource.LOCAL,
+                            mediaUri =
+                            Uri.EMPTY.buildUpon()
+                                .apply {
+                                    scheme("content")
+                                    authority("media")
+                                    path("picker")
+                                    path("a")
+                                    path("$i")
+                                }
+                                .build(),
+                            glideLoadableUri =
+                            Uri.EMPTY.buildUpon()
+                                .apply {
+                                    scheme("content")
+                                    authority("a")
+                                    path("$i")
+                                }
+                                .build(),
+                            dateTakenMillisLong =
+                            LocalDateTime.now()
+                                .minus(i.toLong(), ChronoUnit.DAYS)
+                                .toEpochSecond(ZoneOffset.UTC) * 1000,
+                            sizeInBytes = 1000L,
+                            mimeType = "image/png",
+                            standardMimeTypeExtension = 1,
+                        )
                     )
                 )
             }
@@ -206,7 +214,7 @@ class MediaGridTest {
      */
     @Composable
     private fun grid(
-        selection: Selection<Media>,
+        selection: SelectionImpl<Media>,
         onItemClick: (MediaGridItem) -> Unit,
         onItemLongPress: (MediaGridItem) -> Unit = {},
     ) {
@@ -232,9 +240,9 @@ class MediaGridTest {
     ) {
         Box(
             modifier =
-                // .clickable also merges the semantics of its descendants
-                Modifier.testTag(CUSTOM_ITEM_TEST_TAG).clickable {
-                    if (item is MediaGridItem.MediaItem) {onClick?.invoke(item)} }
+            // .clickable also merges the semantics of its descendants
+            Modifier.testTag(CUSTOM_ITEM_TEST_TAG).clickable {
+                if (item is MediaGridItem.MediaItem) {onClick?.invoke(item)} }
         ) {
             Text(CUSTOM_ITEM_FACTORY_TEXT)
         }
@@ -245,9 +253,9 @@ class MediaGridTest {
     private fun customContentSeparatorFactory() {
         Box(
             modifier =
-                // Merge the semantics into the parent node to make it easy to asset and select
-                // these nodes in the tree.
-                Modifier.semantics(mergeDescendants = true) {}.testTag(CUSTOM_ITEM_SEPARATOR_TAG),
+            // Merge the semantics into the parent node to make it easy to asset and select
+            // these nodes in the tree.
+            Modifier.semantics(mergeDescendants = true) {}.testTag(CUSTOM_ITEM_SEPARATOR_TAG),
         ) {
             Text(CUSTOM_ITEM_SEPARATOR_TEXT)
         }
@@ -256,7 +264,11 @@ class MediaGridTest {
     /** Ensures the MediaGrid loads media with the correct semantic information */
     @Test
     fun testMediaGridDisplaysMedia() = runTest {
-        val selection = Selection<Media>(scope = backgroundScope)
+        val selection =
+            SelectionImpl<Media>(
+                scope = backgroundScope,
+                configuration = provideTestConfigurationFlow(scope = backgroundScope)
+            )
 
         composeTestRule.setContent {
             grid(
@@ -272,7 +284,11 @@ class MediaGridTest {
     /** Ensures the AlbumGrid loads media with the correct semantic information */
     @Test
     fun testAlbumGridDisplaysMedia() = runTest {
-        val selection = Selection<Media>(scope = backgroundScope)
+        val selection =
+            SelectionImpl<Media>(
+                scope = backgroundScope,
+                configuration = provideTestConfigurationFlow(scope = backgroundScope)
+            )
 
         // Modify the pager and flow to get data from the FakeInMemoryAlbumPagingSource.
 
@@ -302,7 +318,11 @@ class MediaGridTest {
      */
     @Test
     fun testMediaGridScroll() = runTest {
-        val selection = Selection<Media>(scope = backgroundScope)
+        val selection =
+            SelectionImpl<Media>(
+                scope = backgroundScope,
+                configuration = provideTestConfigurationFlow(scope = backgroundScope)
+            )
 
         composeTestRule.setContent {
             grid(
@@ -336,14 +356,33 @@ class MediaGridTest {
         val selectedString = resources.getString(R.string.photopicker_item_selected)
 
         runTest {
-            val selection = Selection<Media>(scope = backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = backgroundScope)
+                )
 
             composeTestRule.setContent {
-                grid(
-                    /* selection= */ selection,
-                    /* onItemClick= */ { item -> launch {
-                        if (item is MediaGridItem.MediaItem) selection.toggle(item.media) } },
-                )
+                val photopickerConfiguration: PhotopickerConfiguration =
+                    testPhotopickerConfiguration
+                CompositionLocalProvider(
+                    LocalPhotopickerConfiguration provides photopickerConfiguration,
+                ) {
+                    PhotopickerTheme(/* isDarkTheme */ false,
+                        photopickerConfiguration.intent
+                    ) {
+                        grid(
+                            /* selection= */ selection,
+                            /* onItemClick= */
+                            { item ->
+                                launch {
+                                    if (item is MediaGridItem.MediaItem) selection
+                                        .toggle(item.media)
+                                }
+                            },
+                        )
+                    }
+                }
             }
 
             composeTestRule
@@ -374,15 +413,30 @@ class MediaGridTest {
         val mediaItemString = resources.getString(R.string.photopicker_media_item)
 
         runTest {
-            val selection = Selection<Media>(scope = backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = backgroundScope)
+                )
 
             composeTestRule.setContent {
-                grid(
-                    /* selection= */ selection,
-                    /* onItemClick= */ {},
-                    /* onItemLongPress=*/ { item -> launch {
-                        if (item is MediaGridItem.MediaItem) selection.toggle(item.media) } }
-                )
+                val photopickerConfiguration: PhotopickerConfiguration =
+                    testPhotopickerConfiguration
+                CompositionLocalProvider(
+                    LocalPhotopickerConfiguration provides photopickerConfiguration,
+                ) {
+                    PhotopickerTheme(/* isDarkTheme */ false,
+                        photopickerConfiguration.intent
+                    ) {
+                        grid(
+                            /* selection= */ selection,
+                            /* onItemClick= */ {},
+                            /* onItemLongPress=*/ { item -> launch {
+                                if (item is MediaGridItem.MediaItem) selection.toggle(item.media) }
+                            }
+                        )
+                    }
+                }
             }
 
             composeTestRule
@@ -415,7 +469,11 @@ class MediaGridTest {
         val dataFlow = flowOf(customData)
 
         runTest {
-            val selection = Selection<Media>(scope = backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = backgroundScope)
+                )
 
             composeTestRule.setContent {
                 val items = dataFlow.collectAsLazyPagingItems()
@@ -438,7 +496,11 @@ class MediaGridTest {
     @Test
     fun testMediaGridCustomContentItemFactory() {
         runTest {
-            val selection = Selection<Media>(scope = backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = backgroundScope)
+                )
 
             composeTestRule.setContent {
                 val items = flow.collectAsLazyPagingItems()
@@ -469,7 +531,11 @@ class MediaGridTest {
         val dataFlow = flowOf(customData)
 
         runTest {
-            val selection = Selection<Media>(scope = backgroundScope)
+            val selection =
+                SelectionImpl<Media>(
+                    scope = backgroundScope,
+                    configuration = provideTestConfigurationFlow(scope = backgroundScope)
+                )
 
             composeTestRule.setContent {
                 val items = dataFlow.collectAsLazyPagingItems()

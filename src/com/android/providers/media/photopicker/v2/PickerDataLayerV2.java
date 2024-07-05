@@ -18,13 +18,16 @@ package com.android.providers.media.photopicker.v2;
 
 import static com.android.providers.media.PickerUriResolver.getAlbumUri;
 import static com.android.providers.media.photopicker.sync.PickerSyncManager.IMMEDIATE_LOCAL_SYNC_WORK_NAME;
-import static com.android.providers.media.photopicker.sync.PickerSyncManager.IMMEDIATE_ALBUM_SYNC_WORK_NAME;
 import static com.android.providers.media.photopicker.sync.WorkManagerInitializer.getWorkManager;
+import static com.android.providers.media.photopicker.v2.model.AlbumsCursorWrapper.EMPTY_MEDIA_ID;
+
+import static java.util.Objects.requireNonNull;
 
 import android.annotation.UserIdInt;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.MergeCursor;
@@ -49,9 +52,8 @@ import com.android.providers.media.photopicker.v2.model.VideoMediaQuery;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
-
+import java.util.Objects;
 
 /**
  * This class handles Photo Picker content queries.
@@ -59,7 +61,7 @@ import java.util.List;
 public class PickerDataLayerV2 {
     private static final String TAG = "PickerDataLayerV2";
     private static final int CLOUD_SYNC_TIMEOUT_MILLIS = 500;
-    private static final List<String> sMergedAlbumIds = List.of(
+    public static final List<String> sMergedAlbumIds = List.of(
             AlbumColumns.ALBUM_ID_FAVORITES,
             AlbumColumns.ALBUM_ID_VIDEOS
     );
@@ -135,12 +137,7 @@ public class PickerDataLayerV2 {
             cursors.add(getCloudAlbumsCursor(appContext, query, localAuthority, cloudAuthority));
         }
 
-        for (Iterator<AlbumsCursorWrapper> iterator = cursors.iterator(); iterator.hasNext(); ) {
-            if (iterator.next() == null) {
-                iterator.remove();
-            }
-        }
-
+        cursors.removeIf(Objects::isNull);
         if (cursors.isEmpty()) {
             Log.e(TAG, "No albums available");
             return null;
@@ -316,10 +313,9 @@ public class PickerDataLayerV2 {
             @Nullable String localAuthority) {
         boolean isLocal = localAuthority != null
                 && localAuthority.equals(query.getAlbumAuthority());
-        SyncCompletionWaiter.waitForSync(
-                getWorkManager(appContext),
+        SyncCompletionWaiter.waitForSyncWithTimeout(
                 SyncTrackerRegistry.getAlbumSyncTracker(isLocal),
-                IMMEDIATE_ALBUM_SYNC_WORK_NAME);
+                /* timeoutInMillis */ 500);
     }
 
     /**
@@ -405,8 +401,8 @@ public class PickerDataLayerV2 {
                         PickerSQLConstants.MediaResponse
                                 .AUTHORITY.getProjection(localAuthority, cloudAuthority),
                         PickerSQLConstants.MediaResponse.MEDIA_SOURCE.getProjection(),
-                        PickerSQLConstants.MediaResponse
-                                .WRAPPED_URI.getProjection(localAuthority, cloudAuthority),
+                        PickerSQLConstants.MediaResponse.WRAPPED_URI.getProjection(
+                                localAuthority, cloudAuthority, query.getIntentAction()),
                         PickerSQLConstants.MediaResponse
                                 .UNWRAPPED_URI.getProjection(localAuthority, cloudAuthority),
                         PickerSQLConstants.MediaResponse.DATE_TAKEN_MS.getProjection(),
@@ -531,7 +527,11 @@ public class PickerDataLayerV2 {
             @Nullable String cloudAuthority) {
         final MediaQuery query;
         if (albumId.equals(AlbumColumns.ALBUM_ID_VIDEOS)) {
-            query = new VideoMediaQuery(queryArgs, 1);
+            VideoMediaQuery videoQuery = new VideoMediaQuery(queryArgs, 1);
+            if (!videoQuery.shouldDisplayVideosAlbum()) {
+                return null;
+            }
+            query = videoQuery;
         } else if (albumId.equals(AlbumColumns.ALBUM_ID_FAVORITES)) {
             query = new FavoritesMediaQuery(queryArgs, 1);
         } else {
@@ -582,7 +582,7 @@ public class PickerDataLayerV2 {
                         /* albumId */ albumId,
                         /* dateTakenMillis */ Long.toString(Long.MAX_VALUE),
                         /* displayName */ albumId,
-                        /* mediaId */ Integer.toString(Integer.MAX_VALUE),
+                        /* mediaId */ EMPTY_MEDIA_ID,
                         /* count */ "0", // This value is not used anymore
                         localAuthority,
                 };
@@ -847,12 +847,12 @@ public class PickerDataLayerV2 {
 
             final String cloudAuthority =
                     syncController.getCloudProviderOrDefault(/* defaultValue */ null);
-            if (cloudAuthority != null) {
+            if (syncController.shouldQueryCloudMedia(cloudAuthority)) {
                 final PackageManager packageManager = context.getPackageManager();
+                final ProviderInfo providerInfo = requireNonNull(
+                        packageManager.resolveContentProvider(cloudAuthority, /* flags */ 0));
                 final int uid = packageManager.getPackageUid(
-                        packageManager
-                                .resolveContentProvider(cloudAuthority, /* flags */ 0)
-                                .packageName,
+                        providerInfo.packageName,
                         /* flags */ 0
                 );
                 addAvailableProvidersToCursor(
